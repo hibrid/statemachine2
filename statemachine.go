@@ -3,7 +3,7 @@ package statemachine
 import (
 	"database/sql"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -21,7 +21,7 @@ type StateMachine struct {
 	KafkaProducer   *kafka.Producer
 	mu              sync.Mutex
 	paused          bool
-	userID          string // User or account ID for locking
+	LookupKey       string // User or account ID for locking
 	ResumeFromStep  int    // Step to resume from when recreated
 	SaveAfterStep   bool   // Flag to save state after each step
 	KafkaEventTopic string // Kafka topic to send events
@@ -83,9 +83,9 @@ func (sm *StateMachine) saveStateToDB() error {
 }
 
 // Load the serialized JSON state data from the database
-func loadSerializedStateFromDB(id string, db *sql.DB) ([]byte, error) {
+func loadSerializedStateFromDB(stateMachineType string, id string, db *sql.DB) ([]byte, error) {
 	// Load serialized state data from the database (replace with your database logic)
-	data, err := loadFromDB(id, db)
+	data, err := loadFromDB(stateMachineType, id, db)
 	if err != nil {
 		return nil, err
 	}
@@ -95,34 +95,16 @@ func loadSerializedStateFromDB(id string, db *sql.DB) ([]byte, error) {
 // Start begins the execution of the state machine.
 func (sm *StateMachine) Start() error {
 
+	// Check for locks if necessary
+	if sm.shouldCheckLocks() {
+		// Lock checking logic here
+		if err := sm.checkLocks(); err != nil {
+			return err
+		}
+	}
+
 	sm.paused = false
 	sm.CurrentArbitraryData = make(map[string]interface{})
-
-	// Check if we should resume from a serialized state
-	if sm.ResumeFromStep >= 0 {
-		serializedData, err := loadSerializedStateFromDB(sm.ID, sm.DB)
-		if err != nil {
-			return err
-		}
-
-		// Deserialize the state machine from the loaded data
-		resumedSM, err := deserializeFromJSON(serializedData)
-		if err != nil {
-			return err
-		}
-
-		// Update the state machine to match the resumed state machine
-		sm.CurrentState = resumedSM.CurrentState
-		sm.Direction = resumedSM.Direction
-		sm.History = resumedSM.History
-		// Add any other state-specific fields that you need to restore
-
-		// Adjust the handler index to resume from the correct step
-		sm.ResumeFromStep = resumedSM.ResumeFromStep
-
-		// Initialize current arbitrary data with data from the resumed state
-		sm.CurrentArbitraryData = resumedSM.CurrentArbitraryData
-	}
 
 	for i, handlerInfo := range sm.HandlerInfoList {
 		handler := handlerInfo.Handler
@@ -194,21 +176,102 @@ func (sm *StateMachine) Start() error {
 	return nil
 }
 
-// Function to load data from the database (replace with your implementation)
-func loadFromDB(id string, db *sql.DB) ([]byte, error) {
-	// Implement logic to load data from the database
-	// For example, you can use the sql.DB connection to fetch the data
-	row := db.QueryRow("SELECT data FROM state_machines WHERE id = ?", id)
+// shouldCheckLocks checks if the state machine should check locks based on its configuration.
+func (sm *StateMachine) shouldCheckLocks() bool {
+	return sm.IsGlobalLock || sm.IsLocalLock
+}
 
-	var data []byte
-	if err := row.Scan(&data); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			// Handle case where no data is found for the given ID
-			return nil, nil
-		}
-		return nil, err
+// checkLocks checks for locks and handles locking logic.
+func (sm *StateMachine) checkLocks() error {
+	// Begin a new transaction for lock operations.
+	tx, err := sm.DB.Begin()
+	if err != nil {
+		return err
 	}
-	return data, nil
+	defer tx.Rollback() // Rollback the transaction if it's not committed.
+
+	// Check if the state machine is configured for a global lock.
+	if sm.IsGlobalLock {
+		if err := sm.checkAndObtainGlobalLock(tx); err != nil {
+			return err
+		}
+	}
+
+	// Check if the state machine is configured for a local lock.
+	if sm.IsLocalLock {
+		if err := sm.checkAndObtainLocalLock(tx); err != nil {
+			return err
+		}
+	}
+
+	// Commit the transaction to confirm lock acquisition.
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	// If we reached this point, it means the state machine either doesn't
+	// need to check locks or has successfully obtained the required locks.
+	return nil
+}
+
+// checkAndObtainGlobalLock checks if a global lock exists for the state machine and obtains it if possible.
+func (sm *StateMachine) checkAndObtainGlobalLock(tx *sql.Tx) error {
+	// Check if a global lock exists for this state machine.
+	lockExists, err := checkGlobalLockExists(tx, sm)
+	if err != nil {
+		return err
+	}
+
+	if lockExists {
+		// A global lock exists for this state machine.
+		// Check if this instance owns the lock.
+		if ownedByThisInstance, err := isGlobalLockOwnedByThisInstance(tx, sm); err != nil {
+			return err
+		} else if ownedByThisInstance {
+			// This instance already owns the lock, so proceed.
+			return nil
+		}
+		// Another instance owns the lock; do not proceed.
+		return fmt.Errorf("another instance holds the global lock")
+	}
+
+	// No global lock exists; attempt to obtain it.
+	if err := obtainGlobalLock(tx, sm); err != nil {
+		// Failed to obtain the global lock.
+		return err
+	}
+
+	return nil
+}
+
+// checkAndObtainLocalLock checks if a local lock exists for the state machine and obtains it if possible.
+func (sm *StateMachine) checkAndObtainLocalLock(tx *sql.Tx) error {
+	// Check if a local lock exists for this state machine.
+	lockExists, err := checkLocalLockExists(tx, sm)
+	if err != nil {
+		return err
+	}
+
+	if lockExists {
+		// A local lock exists for this state machine.
+		// Check if this instance owns the lock.
+		if ownedByThisInstance, err := isLocalLockOwnedByThisInstance(tx, sm); err != nil {
+			return err
+		} else if ownedByThisInstance {
+			// This instance already owns the lock, so proceed.
+			return nil
+		}
+		// Another instance owns the lock; do not proceed.
+		return fmt.Errorf("another instance holds the local lock")
+	}
+
+	// No local lock exists; attempt to obtain it.
+	if err := obtainLocalLock(tx, sm); err != nil {
+		// Failed to obtain the local lock.
+		return err
+	}
+
+	return nil
 }
 
 // sendKafkaEvent sends a Kafka event.
@@ -232,7 +295,7 @@ func NewStateMachine(name, id, userID string, db *sql.DB, kafkaProducer *kafka.P
 	sm := &StateMachine{
 		Name:             name,
 		ID:               id,
-		userID:           userID,
+		LookupKey:        userID,
 		DB:               db,
 		KafkaProducer:    kafkaProducer,
 		KafkaEventTopic:  kafkaEventTopic,
@@ -243,6 +306,27 @@ func NewStateMachine(name, id, userID string, db *sql.DB, kafkaProducer *kafka.P
 	sm.Direction = "forward"
 
 	return sm
+}
+
+func LoadStateMachine(name, id string, db *sql.DB) (*StateMachine, error) {
+	// Load serialized state data from the database
+	serializedData, err := loadSerializedStateFromDB(name, id, db)
+	if err != nil {
+		return nil, err
+	}
+
+	// Deserialize the state machine from the loaded data
+	resumedSM, err := deserializeFromJSON(serializedData)
+	if err != nil {
+		return nil, err
+	}
+
+	// Initialize the resumed state machine with additional information as needed
+	resumedSM.Name = name
+	resumedSM.ID = id
+	resumedSM.DB = db
+
+	return resumedSM, nil
 }
 
 // SetInitialState sets the initial state of the state machine.
