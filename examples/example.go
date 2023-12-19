@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 
@@ -96,18 +97,27 @@ func main() {
 		panic(err)
 	}
 
+	//define retry policy (optional)
+	retryPolicy := statemachine.RetryPolicy{
+		MaxTimeout: 10 * time.Second,
+		BaseDelay:  1 * time.Second,
+		RetryType:  statemachine.ExponentialBackoff,
+	}
+
 	config := statemachine.StateMachineConfig{
-		MaxRetries:           3,
-		MaxTimeout:           10,
 		Name:                 "testing",
 		UniqueStateMachineID: "test1",
 		LookupKey:            "5",
 		DB:                   db,
 		Handlers:             nil,
 		ExecuteSynchronously: true,
+		RetryPolicy:          retryPolicy,
 	}
 
-	sm := statemachine.NewStateMachine("testing", "test1", "5", db, nil, "none", true)
+	sm, err := statemachine.NewStateMachine(config)
+	if err != nil {
+		panic(err)
+	}
 	sm.RegisterEventCallback(statemachine.StatePending, statemachine.StateCallbacks{
 		AfterEvent: afterEventCallback,
 		EnterState: enterStateCallback,
@@ -119,7 +129,7 @@ func main() {
 		EnterState: enterStateCallback,
 		LeaveState: leaveStateCallback,
 	})
-	sm.SaveAfterStep = true
+	sm.SaveAfterEachStep = true
 	testHandler := &TestHandler{}
 	sm.AddHandler(testHandler, testHandler.Name())
 	testHandler2 := &TestHandler2{}

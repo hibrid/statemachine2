@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
@@ -129,7 +130,7 @@ type StateMachine struct {
 	KafkaProducer        *kafka.Producer           `json:"-"`
 	LookupKey            string                    `json:"lookupKey"`            // User or account ID for locking
 	ResumeFromStep       int                       `json:"resumeFromStep"`       // Step to resume from when recreated
-	SaveAfterStep        bool                      `json:"saveAfterStep"`        // Flag to save state after each step
+	SaveAfterEachStep    bool                      `json:"saveAfterStep"`        // Flag to save state after each step
 	KafkaEventTopic      string                    `json:"kafkaEventTopic"`      // Kafka topic to send events
 	History              []TransitionHistory       `json:"history"`              // History of executed transitions
 	ExecuteSynchronously bool                      `json:"executeSynchronously"` // Flag to control whether to execute the next step immediately
@@ -140,13 +141,24 @@ type StateMachine struct {
 	UnlockedTimestamp    time.Time              `json:"unlockedTimestamp"`
 	UsesGlobalLock       bool                   `json:"usesGlobalLock"`
 	UsesLocalLock        bool                   `json:"usesLocalLock"`
+	RetryCount           int                    `json:"retryCount"`
+	RetryType            RetryType              `json:"retryType"`
+	MaxTimeout           time.Duration          `json:"maxTimeout"`
+	BaseDelay            time.Duration          `json:"baseDelay"`
+	LastRetry            time.Time              `json:"lastRetry"`
 	SerializedState      []byte                 `json:"-"`
 }
 
-type ExponentialBackoffConfig struct {
-	MaxRetries int
-	MaxTimeout time.Duration
-	BaseDelay  time.Duration
+type RetryType string
+
+const (
+	ExponentialBackoff RetryType = "exponential_backoff"
+)
+
+type RetryPolicy struct {
+	RetryType  RetryType     `json:"retryType"`  // Type of retry policy
+	MaxTimeout time.Duration `json:"maxTimeout"` // Maximum timeout for retries
+	BaseDelay  time.Duration `jason:"baseDelay"` // Base delay for retries
 }
 
 type StateMachineConfig struct {
@@ -158,6 +170,7 @@ type StateMachineConfig struct {
 	KafkaEventTopic      string
 	ExecuteSynchronously bool
 	Handlers             []Handler
+	RetryPolicy          RetryPolicy
 }
 
 // TransitionHistory stores information about executed transitions.
@@ -272,6 +285,28 @@ func (sm *StateMachine) saveStateToDB() error {
 	return nil
 }
 
+func (sm *StateMachine) CalculateNextRetryDelay() time.Duration {
+	baseDelay := sm.BaseDelay // Starting delay of 1 second
+	maxDelay := sm.MaxTimeout // Maximum delay of 60 seconds
+
+	delay := time.Duration(math.Pow(2, float64(sm.RetryCount))) * baseDelay
+	if delay > maxDelay {
+		delay = maxDelay
+	}
+
+	return delay
+}
+
+func (sm *StateMachine) GetRemainingDelay() time.Duration {
+	nextRetryTime := sm.LastRetry.Add(sm.CalculateNextRetryDelay())
+	remainingDelay := time.Until(nextRetryTime)
+
+	if remainingDelay < 0 {
+		return 0
+	}
+	return remainingDelay
+}
+
 // Load the serialized JSON state data from the database
 func loadStateMachineFromDB(stateMachineType string, id string, db *sql.DB) (*StateMachine, error) {
 	// Load serialized state data from the database (replace with your database logic)
@@ -348,22 +383,68 @@ func (sm *StateMachine) handleTransition(context *Context, event Event) error {
 
 	sm.CurrentArbitraryData = context.OutputArbitraryData
 	var newState State
+	stepNumber := context.StepNumber
+	// Update transition history
+	historyEntry := TransitionHistory{
+		FromStep:            stepNumber,
+		ToStep:              stepNumber,
+		HandlerName:         context.Handler.Name(),
+		InitialState:        context.InputState,
+		ModifiedState:       sm.CurrentState,
+		InputArbitraryData:  context.InputArbitraryData,
+		OutputArbitraryData: context.OutputArbitraryData,
+		EventEmitted:        event,
+	}
+
+	var remainingDelay time.Duration
+	var shouldRetry bool
+
 	// Handle events and transitions using the handler's Execute methods
 	switch event {
 	case OnFailed:
 		newState = StateFailed
 	case OnSuccess:
 		newState = StateOpen
+		if stepNumber == len(sm.Handlers)-1 {
+			sm.ResumeFromStep = stepNumber
+			sm.CurrentState = StateCompleted
+		} else {
+			historyEntry.FromStep = stepNumber - 1
+			sm.ResumeFromStep = stepNumber + 1
+		}
 	case OnResetTimeout:
 		newState = StateRollback
+		historyEntry.FromStep = stepNumber + 1
+		if stepNumber == 0 {
+			sm.ResumeFromStep = stepNumber
+			sm.CurrentState = StateRollbackCompleted
+		} else {
+			sm.ResumeFromStep = stepNumber - 1
+		}
 	case OnPause:
 		newState = StatePaused
 	case OnAlreadyCompleted:
 		newState = StateCompleted
 	case OnRollback:
 		newState = StateRollback
+		historyEntry.FromStep = stepNumber + 1
+		if stepNumber == 0 {
+			sm.ResumeFromStep = stepNumber
+			sm.CurrentState = StateRollbackCompleted
+		} else {
+			sm.ResumeFromStep = stepNumber - 1
+		}
 	case OnResume:
 		newState = StateOpen
+	case OnRetry:
+		newState = StateRetry
+		if newState == sm.CurrentState {
+			sm.RetryCount++
+		}
+		sm.LastRetry = time.Now()
+		remainingDelay = sm.GetRemainingDelay()
+		shouldRetry = true
+
 	case OnUnknownSituation:
 		newState = StateParked
 	default:
@@ -377,55 +458,14 @@ func (sm *StateMachine) handleTransition(context *Context, event Event) error {
 
 	// Update the state
 	sm.CurrentState = newState
-
-	stepNumber := context.StepNumber
-
-	// Update transition history
-	historyEntry := TransitionHistory{
-		FromStep:            stepNumber,
-		ToStep:              stepNumber,
-		HandlerName:         context.Handler.Name(),
-		InitialState:        context.InputState,
-		ModifiedState:       sm.CurrentState,
-		InputArbitraryData:  context.InputArbitraryData,
-		OutputArbitraryData: context.OutputArbitraryData,
-		EventEmitted:        event,
-	}
-
-	if sm.CurrentState == StateRollback {
-		historyEntry.FromStep = stepNumber + 1
-		if stepNumber == 0 {
-			sm.ResumeFromStep = stepNumber
-			sm.CurrentState = StateRollbackCompleted
-		} else {
-			sm.ResumeFromStep = stepNumber - 1
-		}
-
-	} else {
-
-		if stepNumber == len(sm.Handlers)-1 {
-			sm.ResumeFromStep = stepNumber
-			sm.CurrentState = StateCompleted
-		} else {
-			historyEntry.FromStep = stepNumber - 1
-			sm.ResumeFromStep = stepNumber + 1
-		}
-	}
-
+	historyEntry.ModifiedState = sm.CurrentState
 	sm.History = append(sm.History, historyEntry)
 
 	// Save state to MySQL or send Kafka event based on configuration.
-	if sm.SaveAfterStep {
+	if sm.SaveAfterEachStep {
 		if err := sm.saveStateToDB(); err != nil {
 			// Handle state save error.
 			return err
-		}
-		// Send Kafka event if configured
-		if sm.KafkaEventTopic != "" {
-			if err := sm.sendKafkaEvent(); err != nil {
-				// Handle Kafka event sending error.
-				return err
-			}
 		}
 	}
 
@@ -437,8 +477,22 @@ func (sm *StateMachine) handleTransition(context *Context, event Event) error {
 		}
 	}
 
-	if sm.ExecuteSynchronously && (sm.CurrentState == StatePending || sm.CurrentState == StateOpen) {
-		return sm.Run()
+	// Handle retry logic
+	if shouldRetry {
+		if sm.ExecuteSynchronously {
+			if remainingDelay > 0 {
+				time.Sleep(remainingDelay)
+			}
+			return sm.Run()
+		} else {
+			// Send Kafka event if configured
+			if sm.KafkaEventTopic != "" {
+				if err := sm.sendKafkaEvent(); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
 	}
 
 	return nil
@@ -558,6 +612,18 @@ func NewStateMachine(config StateMachineConfig) (*StateMachine, error) {
 	err = CreateStateMachineTableIfNotExists(config.DB, config.Name)
 	if err != nil {
 		panic(err)
+	}
+
+	if config.RetryPolicy.RetryType == "" {
+		config.RetryPolicy.RetryType = ExponentialBackoff
+	}
+
+	if config.RetryPolicy.BaseDelay == 0 {
+		config.RetryPolicy.BaseDelay = 1 * time.Second
+	}
+
+	if config.RetryPolicy.MaxTimeout == 0 {
+		config.RetryPolicy.MaxTimeout = 10 * time.Second
 	}
 
 	sm := &StateMachine{
