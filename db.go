@@ -2,10 +2,10 @@ package statemachine
 
 import (
 	"database/sql"
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 )
 
 func normalizeTableName(stateMachineName string) string {
@@ -99,18 +99,17 @@ func CreateStateMachineTableIfNotExists(db *sql.DB, stateMachineName string) err
 	// Define the SQL statement to create the table for the state machine
 	createTableSQL := fmt.Sprintf(`
         CREATE TABLE IF NOT EXISTS %s (
-            ID VARCHAR(36) PRIMARY KEY,
+            ID VARCHAR(255) PRIMARY KEY,
             CurrentState VARCHAR(255),
 			LookupKey VARCHAR(255),
-            Direction VARCHAR(10),
             ResumeFromStep INT,
             SaveAfterStep BOOLEAN,
             KafkaEventTopic VARCHAR(255),
             SerializedState JSON,
-            LockTimestamp TIMESTAMP,
+			CreatedTimestamp TIMESTAMP,
             UpdatedTimestamp TIMESTAMP,
-            IsGlobalLock BOOLEAN,
-            IsLocalLock BOOLEAN,
+            UsesGlobalLock BOOLEAN,
+            UsesLocalLock BOOLEAN,
 			UnlockTimestamp TIMESTAMP NULL,  
 			INDEX (LookupKey)
             -- Add other columns as needed
@@ -170,8 +169,8 @@ func obtainLocalLock(tx *sql.Tx, sm *StateMachine) error {
 	}
 
 	// Insert a new local lock record into the state machine's table with the custom lookup key.
-	_, err = tx.Exec(fmt.Sprintf("INSERT INTO %s (ID, CurrentState, LookupKey, Direction, ResumeFromStep, SaveAfterStep, KafkaEventTopic, SerializedState, CreatedTimestamp, UpdatedTimestamp, IsGlobalLock, IsLocalLock, UnlockTimestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);", normalizeTableName(sm.Name)),
-		sm.ID, sm.CurrentState, sm.LookupKey, sm.Direction, sm.ResumeFromStep, sm.SaveAfterStep, sm.KafkaEventTopic, string(serializedState), sm.CreatedTimestamp, sm.UpdatedTimestamp, sm.IsGlobalLock, sm.IsLocalLock)
+	_, err = tx.Exec(fmt.Sprintf("INSERT INTO %s (ID, CurrentState, LookupKey, ResumeFromStep, SaveAfterStep, KafkaEventTopic, SerializedState, CreatedTimestamp, UpdatedTimestamp, UsesGlobalLock, UsesLocalLock, UnlockTimestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);", normalizeTableName(sm.Name)),
+		sm.ID, sm.CurrentState, sm.LookupKey, sm.ResumeFromStep, sm.SaveAfterStep, sm.KafkaEventTopic, string(serializedState), sm.CreatedTimestamp, sm.UpdatedTimestamp, sm.UsesGlobalLock, sm.UsesLocalLock)
 
 	if err != nil {
 		return err
@@ -181,21 +180,19 @@ func obtainLocalLock(tx *sql.Tx, sm *StateMachine) error {
 	return nil
 }
 
-// Insert a state machine into the database
-func insertStateMachine(db *sql.DB, sm *StateMachine) error {
-	// Construct the SQL statement with the appropriate table name
-	tableName := sm.Name
+func insertStateMachine(sm *StateMachine) error {
+	tableName := normalizeTableName(sm.Name)
 	insertSQL := fmt.Sprintf(`
-        INSERT INTO %s (ID, CurrentState, LookupKey, Direction, ResumeFromStep, SaveAfterStep, KafkaEventTopic, SerializedState, CreatedTimestamp, UpdatedTimestamp, IsGlobalLock, IsLocalLock)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`, normalizeTableName(tableName))
+        INSERT INTO %s (ID, CurrentState, LookupKey, ResumeFromStep, SaveAfterStep, KafkaEventTopic, SerializedState, CreatedTimestamp, UpdatedTimestamp, UsesGlobalLock, UsesLocalLock)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`, tableName)
 
 	serializedState, err := sm.serializeToJSON()
 	if err != nil {
 		return err
 	}
 
-	// Execute the SQL statement
-	_, err = db.Exec(insertSQL, sm.ID, sm.CurrentState, sm.Direction, sm.ResumeFromStep, sm.SaveAfterStep, sm.KafkaEventTopic, string(serializedState), sm.CreatedTimestamp, sm.UpdatedTimestamp, sm.IsGlobalLock, sm.IsLocalLock)
+	// Execute the SQL statement within the transaction
+	_, err = sm.DB.Exec(insertSQL, sm.ID, sm.CurrentState, sm.LookupKey, sm.ResumeFromStep, sm.SaveAfterStep, sm.KafkaEventTopic, string(serializedState), sm.CreatedTimestamp.UTC(), sm.UpdatedTimestamp.UTC(), sm.UsesGlobalLock, sm.UsesLocalLock)
 
 	return err
 }
@@ -217,7 +214,7 @@ func queryStateMachinesByType(db *sql.DB, stateMachineName string) ([]StateMachi
 	for rows.Next() {
 		var sm StateMachine
 		// Scan row data into sm fields
-		err := rows.Scan(&sm.ID, &sm.CurrentState, &sm.Direction, &sm.ResumeFromStep, &sm.SaveAfterStep, &sm.KafkaEventTopic, serializedState, &sm.CreatedTimestamp, &sm.UpdatedTimestamp, &sm.IsGlobalLock, &sm.IsLocalLock)
+		err := rows.Scan(&sm.ID, &sm.CurrentState, &sm.ResumeFromStep, &sm.SaveAfterStep, &sm.KafkaEventTopic, serializedState, &sm.CreatedTimestamp, &sm.UpdatedTimestamp, &sm.UsesGlobalLock, &sm.UsesLocalLock)
 		if err != nil {
 			return nil, err
 		}
@@ -227,30 +224,163 @@ func queryStateMachinesByType(db *sql.DB, stateMachineName string) ([]StateMachi
 	return stateMachines, nil
 }
 
-func updateStateMachineState(db *sql.DB, sm *StateMachine) error {
-	tableName := sm.Name
-	updateSQL := fmt.Sprintf("UPDATE %s SET CurrentState = ? WHERE ID = ?;", tableName)
-
-	_, err := db.Exec(updateSQL, sm.CurrentState, sm.ID)
-	return err
+func parseTimestamp(timestamp string) (time.Time, error) {
+	return time.Parse("2006-01-02 15:04:05", timestamp)
 }
 
-// loadFromDB loads data from the database for a state machine by type and ID.
-func loadFromDB(typeName, id string, db *sql.DB) ([]byte, error) {
-	// Define the SQL query to select data based on type and ID.
-	query := fmt.Sprintf("SELECT SerializedState FROM %s WHERE ID = ?", normalizeTableName(typeName))
+func loadStateMachineWithNoLock(sm *StateMachine) (*StateMachine, error) {
+	tableName := normalizeTableName(sm.Name)
+	querySQL := fmt.Sprintf("SELECT * FROM %s WHERE ID = ?;", tableName)
 
-	// Query the database to retrieve the serialized state.
-	row := db.QueryRow(query, id)
+	// Execute the SQL query
+	rows, err := sm.DB.Query(querySQL, sm.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
+	// Parse the query results into StateMachine structs
+	var serializedState string
+	var createdTimestampStr, updatedTimestampStr, unlockedTimestampStr sql.NullString
+	for rows.Next() {
+		// Scan row data into sm fields
+		err := rows.Scan(&sm.ID, &sm.CurrentState, &sm.ResumeFromStep, &sm.SaveAfterStep, &sm.KafkaEventTopic, serializedState, &sm.CreatedTimestamp, &sm.UpdatedTimestamp, &sm.UsesGlobalLock, &sm.UsesLocalLock)
+		if err != nil {
+			return nil, err
+		}
+		if createdTimestampStr.Valid {
+			sm.CreatedTimestamp, err = parseTimestamp(createdTimestampStr.String)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		if updatedTimestampStr.Valid {
+			sm.UpdatedTimestamp, err = parseTimestamp(updatedTimestampStr.String)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		if unlockedTimestampStr.Valid {
+			sm.UnlockedTimestamp, err = parseTimestamp(unlockedTimestampStr.String)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	return sm, nil
+}
+
+func loadStateMachine(tx *sql.Tx, sm *StateMachine) (*StateMachine, error) {
+	tableName := normalizeTableName(sm.Name)
+	querySQL := fmt.Sprintf("SELECT * FROM %s WHERE ID = ?;", tableName)
+
+	var loadedSM StateMachine
 	var serializedState []byte
-	if err := row.Scan(&serializedState); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			// Handle case where no data is found for the given ID
-			return nil, nil
+	var createdTimestampStr, updatedTimestampStr, unlockedTimestampStr sql.NullString
+
+	err := tx.QueryRow(querySQL, sm.ID).Scan(&loadedSM.ID, &loadedSM.CurrentState, &loadedSM.LookupKey, &loadedSM.ResumeFromStep, &loadedSM.SaveAfterStep, &loadedSM.KafkaEventTopic, &serializedState, &createdTimestampStr, &updatedTimestampStr, &loadedSM.UsesGlobalLock, &loadedSM.UsesLocalLock, &unlockedTimestampStr)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("state machine not found")
 		}
 		return nil, err
 	}
 
-	return serializedState, nil
+	if createdTimestampStr.Valid {
+		loadedSM.CreatedTimestamp, err = parseTimestamp(createdTimestampStr.String)
+		if err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+	}
+
+	if updatedTimestampStr.Valid {
+		loadedSM.UpdatedTimestamp, err = parseTimestamp(updatedTimestampStr.String)
+		if err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+	}
+
+	if unlockedTimestampStr.Valid {
+		loadedSM.UnlockedTimestamp, err = parseTimestamp(unlockedTimestampStr.String)
+		if err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+	}
+
+	loadedSM.SerializedState = serializedState
+	return &loadedSM, nil
+}
+
+func lockStateMachine(tx *sql.Tx, sm *StateMachine) error {
+	tableName := normalizeTableName(sm.Name)
+	lockSQL := fmt.Sprintf("SELECT ID FROM %s WHERE ID = ? FOR UPDATE;", tableName)
+
+	_, err := tx.Exec(lockSQL, sm.ID)
+	return err
+}
+
+func loadAndLockStateMachine(sm *StateMachine) (*StateMachine, error) {
+	tableName := normalizeTableName(sm.Name)
+	tx, err := sm.DB.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	// Lock the state machine
+	err = lockStateMachine(tx, sm)
+	if err != nil {
+		return nil, err
+	}
+
+	// Load the state machine
+	loadedSM, err := loadStateMachine(tx, sm)
+	if err != nil {
+		return nil, err
+	}
+
+	if IsTerminalState(sm.CurrentState) {
+		// Row exists, but the state machine is in a terminal state
+		return loadedSM, fmt.Errorf("state machine is in a terminal state")
+	}
+
+	// Set state to in_progress and update the database
+	updateSQL := fmt.Sprintf("UPDATE %s SET CurrentState = '%s', UpdatedTimestamp = NOW() WHERE ID = ?;", tableName, StateInProgress)
+	_, err = tx.Exec(updateSQL, sm.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	tx.Commit()
+	return loadedSM, nil
+}
+
+func updateStateMachineState(sm *StateMachine, newState State) error {
+	tableName := normalizeTableName(sm.Name)
+	updateSQL := fmt.Sprintf("UPDATE %s SET CurrentState = ?, SerializedState = ?, UpdatedTimestamp = NOW() WHERE ID = ?;", tableName)
+
+	tx, err := sm.DB.Begin()
+	if err != nil {
+		return err
+	}
+
+	newSerializedState, err := sm.serializeToJSON()
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	_, err = tx.Exec(updateSQL, newState, newSerializedState, sm.ID)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	return tx.Commit()
 }
