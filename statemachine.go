@@ -36,6 +36,8 @@ const (
 	OnError
 	OnBeforeEvent
 	OnAfterEvent
+	OnCompleted
+	OnRollbackCompleted
 )
 
 func (e Event) String() string {
@@ -66,6 +68,10 @@ func (e Event) String() string {
 		return "OnBeforeEvent"
 	case OnAfterEvent:
 		return "OnAfterEvent"
+	case OnCompleted:
+		return "OnCompleted"
+	case OnRollbackCompleted:
+		return "OnRollbackCompleted"
 	default:
 		return fmt.Sprintf("UnknownEvent(%d)", e)
 	}
@@ -139,15 +145,24 @@ type StateMachine struct {
 	CreatedTimestamp     time.Time              `json:"createdTimestamp"`
 	UpdatedTimestamp     time.Time              `json:"updatedTimestamp"`
 	UnlockedTimestamp    time.Time              `json:"unlockedTimestamp"`
-	UsesGlobalLock       bool                   `json:"usesGlobalLock"`
-	UsesLocalLock        bool                   `json:"usesLocalLock"`
-	RetryCount           int                    `json:"retryCount"`
-	RetryType            RetryType              `json:"retryType"`
-	MaxTimeout           time.Duration          `json:"maxTimeout"`
-	BaseDelay            time.Duration          `json:"baseDelay"`
-	LastRetry            time.Time              `json:"lastRetry"`
-	SerializedState      []byte                 `json:"-"`
+	//UsesGlobalLock       bool                   `json:"usesGlobalLock"`
+	//UsesLocalLock        bool                   `json:"usesLocalLock"`
+	LockType        LockType      `json:"lockType"`
+	RetryCount      int           `json:"retryCount"`
+	RetryType       RetryType     `json:"retryType"`
+	MaxTimeout      time.Duration `json:"maxTimeout"`
+	BaseDelay       time.Duration `json:"baseDelay"`
+	LastRetry       time.Time     `json:"lastRetry"`
+	SerializedState []byte        `json:"-"`
 }
+
+type LockType int
+
+const (
+	NoLock LockType = iota
+	GlobalLock
+	LocalLock
+)
 
 type RetryType string
 
@@ -194,6 +209,7 @@ type Handler interface {
 	ExecuteResume(data map[string]interface{}, transitionHistory []TransitionHistory) (Event, map[string]interface{}, error)
 }
 
+// TerminalStates defines the states where the state machine stops processing.
 var TerminalStates = map[State]bool{
 	StateCompleted:         true,
 	StateFailed:            true,
@@ -201,6 +217,7 @@ var TerminalStates = map[State]bool{
 	StateCancelled:         true,
 }
 
+// IsTerminalState checks if the given state is a terminal state.
 func IsTerminalState(state State) bool {
 	_, isTerminal := TerminalStates[state]
 	return isTerminal
@@ -212,11 +229,12 @@ var ValidTransitions = map[State]map[Event][]State{
 		OnFailed:  []State{StateFailed},
 	},
 	StateOpen: {
-		OnSuccess:  []State{StateOpen, StateCompleted},
-		OnFailed:   []State{StateFailed},
-		OnPause:    []State{StatePaused},
-		OnRollback: []State{StateRollback},
-		OnRetry:    []State{StateRetry},
+		OnSuccess:   []State{StateOpen, StateCompleted},
+		OnCompleted: []State{StateCompleted},
+		OnFailed:    []State{StateFailed},
+		OnPause:     []State{StatePaused},
+		OnRollback:  []State{StateRollback},
+		OnRetry:     []State{StateRetry},
 
 		OnUnknownSituation: []State{StateParked},
 	},
@@ -228,6 +246,7 @@ var ValidTransitions = map[State]map[Event][]State{
 	StateRollback: {
 		OnSuccess:          []State{StateRollbackCompleted},
 		OnFailed:           []State{StateFailed},
+		OnCompleted:        []State{StateRollbackCompleted},
 		OnUnknownSituation: []State{StateParked},
 	},
 	StatePaused: {
@@ -322,6 +341,73 @@ func loadStateMachineFromDB(stateMachineType string, id string, db *sql.DB) (*St
 	return sm, nil
 }
 
+// Run executes the state machine.
+func (sm *StateMachine) Run() error {
+	if err := sm.checkAndAcquireLocks(); err != nil {
+		return err
+	}
+
+	context := sm.createContext()
+	if err := sm.validateHandlers(); err != nil {
+		return err
+	}
+
+	return sm.processStateMachine(context)
+}
+
+// processStateMachine processes the state machine based on the current context.
+func (sm *StateMachine) processStateMachine(context *Context) error {
+	// Check that CurrentArbitraryData is not nil
+	if sm.CurrentArbitraryData == nil {
+		sm.CurrentArbitraryData = make(map[string]interface{})
+	}
+
+	if sm.Handlers == nil || len(sm.Handlers) == 0 {
+		return fmt.Errorf("no handlers found")
+	}
+
+	var terminalEvent Event
+
+	if sm.ResumeFromStep >= len(sm.Handlers) {
+		terminalEvent = OnCompleted
+		return sm.handleEvent(context, terminalEvent)
+	} else if sm.ResumeFromStep < 0 {
+		terminalEvent = OnRollbackCompleted
+		return sm.handleEvent(context, terminalEvent)
+	}
+
+	handler := sm.Handlers[sm.ResumeFromStep]
+	context.Handler = handler
+
+	executionEvent, err := context.Handle()
+	if err != nil {
+		return err
+	}
+
+	return sm.handleEvent(context, executionEvent)
+}
+
+// createContext creates a new context for the state machine.
+func (sm *StateMachine) createContext() *Context {
+	return &Context{
+		InputState:          sm.CurrentState,
+		InputArbitraryData:  make(map[string]interface{}),
+		OutputArbitraryData: make(map[string]interface{}),
+		StepNumber:          sm.ResumeFromStep,
+		TransitionHistory:   sm.History,
+		StateMachine:        sm,
+	}
+}
+
+// validateHandlers checks if the state machine has valid handlers.
+func (sm *StateMachine) validateHandlers() error {
+	if sm.Handlers == nil || len(sm.Handlers) == 0 {
+		return fmt.Errorf("no handlers found")
+	}
+	return nil
+}
+
+/*
 // Start begins the execution of the state machine.
 func (sm *StateMachine) Run() error {
 
@@ -351,6 +437,16 @@ func (sm *StateMachine) Run() error {
 		return fmt.Errorf("no handlers found")
 	}
 
+	var terminalEvent Event
+
+	if sm.ResumeFromStep >= len(sm.Handlers) {
+		terminalEvent = OnCompleted
+		return sm.handleEvent(context, terminalEvent)
+	} else if sm.ResumeFromStep < 0 {
+		terminalEvent = OnRollbackCompleted
+		return sm.handleEvent(context, terminalEvent)
+	}
+
 	handler := sm.Handlers[sm.ResumeFromStep]
 	context.Handler = handler
 
@@ -359,11 +455,15 @@ func (sm *StateMachine) Run() error {
 		return err
 	}
 
-	err = sm.HandleEvent(context, executionEvent)
+	return sm.handleEvent(context, executionEvent)
+}
+*/
+
+func (sm *StateMachine) handleEvent(context *Context, event Event) error {
+	err := sm.HandleEvent(context, event)
 	if err != nil {
 		return err
 	}
-
 	return nil
 }
 
@@ -401,37 +501,30 @@ func (sm *StateMachine) handleTransition(context *Context, event Event) error {
 
 	// Handle events and transitions using the handler's Execute methods
 	switch event {
+	case OnCompleted:
+		newState = StateCompleted
+	case OnRollbackCompleted:
+		newState = StateRollbackCompleted
 	case OnFailed:
 		newState = StateFailed
 	case OnSuccess:
 		newState = StateOpen
-		if stepNumber == len(sm.Handlers)-1 {
-			sm.ResumeFromStep = stepNumber
-			sm.CurrentState = StateCompleted
-		} else {
-			historyEntry.FromStep = stepNumber - 1
-			sm.ResumeFromStep = stepNumber + 1
-		}
+		// we're moving forward direction and the FromStep is the previous step for our history entry
+		historyEntry.FromStep = stepNumber - 1
+		sm.ResumeFromStep = stepNumber + 1
+
 	case OnResetTimeout:
 		newState = StateRollback
-		historyEntry.FromStep = stepNumber + 1
-		if stepNumber == 0 {
-			sm.ResumeFromStep = stepNumber
-			sm.CurrentState = StateRollbackCompleted
-		} else {
-			sm.ResumeFromStep = stepNumber - 1
-		}
 	case OnPause:
 		newState = StatePaused
 	case OnAlreadyCompleted:
-		newState = StateCompleted
+		newState = sm.CurrentState
 	case OnRollback:
 		newState = StateRollback
-		historyEntry.FromStep = stepNumber + 1
-		if stepNumber == 0 {
-			sm.ResumeFromStep = stepNumber
-			sm.CurrentState = StateRollbackCompleted
-		} else {
+		if sm.CurrentState == StateRollback {
+			// move the resume step back by 1 since we were already on rollback state
+			// and not just entering the rollback state
+			// if we were, we would have set the resume step to the current step
 			sm.ResumeFromStep = stepNumber - 1
 		}
 	case OnResume:
@@ -498,46 +591,28 @@ func (sm *StateMachine) handleTransition(context *Context, event Event) error {
 	return nil
 }
 
-// shouldCheckLocks checks if the state machine should check locks based on its configuration.
-func (sm *StateMachine) shouldCheckLocks() bool {
-	return sm.UsesGlobalLock || sm.UsesLocalLock
+// shouldCheckLocks is replaced by checkAndAcquireLocks
+func (sm *StateMachine) checkAndAcquireLocks() error {
+
+	switch sm.LockType {
+	case GlobalLock:
+		return sm.checkAndObtainGlobalLock()
+	case LocalLock:
+		return sm.checkAndObtainLocalLock()
+	default:
+		return nil // No locking required
+	}
+
 }
 
-// checkLocks checks for locks and handles locking logic.
-func (sm *StateMachine) checkLocks() error {
-	// Begin a new transaction for lock operations.
+// checkAndObtainGlobalLock checks if a global lock exists for the state machine and obtains it if possible.
+func (sm *StateMachine) checkAndObtainGlobalLock() error {
 	tx, err := sm.DB.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback() // Rollback the transaction if it's not committed.
 
-	// Check if the state machine is configured for a global lock.
-	if sm.UsesGlobalLock {
-		if err := sm.checkAndObtainGlobalLock(tx); err != nil {
-			return err
-		}
-	}
-
-	// Check if the state machine is configured for a local lock.
-	if sm.UsesLocalLock {
-		if err := sm.checkAndObtainLocalLock(tx); err != nil {
-			return err
-		}
-	}
-
-	// Commit the transaction to confirm lock acquisition.
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-
-	// If we reached this point, it means the state machine either doesn't
-	// need to check locks or has successfully obtained the required locks.
-	return nil
-}
-
-// checkAndObtainGlobalLock checks if a global lock exists for the state machine and obtains it if possible.
-func (sm *StateMachine) checkAndObtainGlobalLock(tx *sql.Tx) error {
 	// Check if a global lock exists for this state machine.
 	lockExists, err := checkGlobalLockExists(tx, sm)
 	if err != nil {
@@ -563,11 +638,22 @@ func (sm *StateMachine) checkAndObtainGlobalLock(tx *sql.Tx) error {
 		return err
 	}
 
+	// Commit the transaction to confirm lock acquisition.
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
 // checkAndObtainLocalLock checks if a local lock exists for the state machine and obtains it if possible.
-func (sm *StateMachine) checkAndObtainLocalLock(tx *sql.Tx) error {
+func (sm *StateMachine) checkAndObtainLocalLock() error {
+	tx, err := sm.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() // Rollback the transaction if it's not committed.
+
 	// Check if a local lock exists for this state machine.
 	lockExists, err := checkLocalLockExists(tx, sm)
 	if err != nil {
@@ -590,6 +676,11 @@ func (sm *StateMachine) checkAndObtainLocalLock(tx *sql.Tx) error {
 	// No local lock exists; attempt to obtain it.
 	if err := obtainLocalLock(tx, sm); err != nil {
 		// Failed to obtain the local lock.
+		return err
+	}
+
+	// Commit the transaction to confirm lock acquisition.
+	if err := tx.Commit(); err != nil {
 		return err
 	}
 
@@ -695,8 +786,14 @@ func (sm *StateMachine) RegisterEventCallback(state State, callbacks StateCallba
 	return sm
 }
 
+// SaveState saves the state machine's state to the database.
+func (sm *StateMachine) SaveState() error {
+	// Refactored to use a more descriptive method name
+	return sm.saveStateToDB()
+}
+
+// LoadStateMachine loads a StateMachine from the database.
 func LoadStateMachine(name, id string, db *sql.DB) (*StateMachine, error) {
-	// Load serialized state data from the database
 	sm, err := loadStateMachineFromDB(name, id, db)
 	if err != nil {
 		return nil, err
