@@ -55,11 +55,11 @@ func DetermineTerminalStateEvent(smCtx *Context) (executionEvent Event) {
 }
 
 // DetermineExecutionAction determines the execution action based on the input state.
-func DetermineExecutionAction(smCtx *Context) (executionEvent Event, err error) {
+func DetermineExecutionAction(inputArbitraryData map[string]interface{}, smCtx *Context) (executionEvent Event, err error) {
 	if IsTerminalState(smCtx.InputState) {
 		return DetermineTerminalStateEvent(smCtx), nil
 	}
-
+	var outputData map[string]interface{}
 	switch smCtx.InputState {
 	case StateParked:
 		// If parked, try to restart execution based on previous state
@@ -67,21 +67,21 @@ func DetermineExecutionAction(smCtx *Context) (executionEvent Event, err error) 
 		return restartExecutionFromState(lastState, smCtx)
 
 	case StatePending, StateOpen:
-		executionEvent, _, err = smCtx.Handler.ExecuteForward(smCtx.InputArbitraryData, smCtx.TransitionHistory)
+		executionEvent, outputData, err = smCtx.Handler.ExecuteForward(inputArbitraryData, smCtx.TransitionHistory)
 
 	case StatePaused:
-		executionEvent, _, err = smCtx.Handler.ExecutePause(smCtx.InputArbitraryData, smCtx.TransitionHistory)
+		executionEvent, outputData, err = smCtx.Handler.ExecutePause(inputArbitraryData, smCtx.TransitionHistory)
 
 	case StateRollback:
-		executionEvent, _, err = smCtx.Handler.ExecuteBackward(smCtx.InputArbitraryData, smCtx.TransitionHistory)
+		executionEvent, outputData, err = smCtx.Handler.ExecuteBackward(inputArbitraryData, smCtx.TransitionHistory)
 
 	case StateResume:
-		executionEvent, _, err = smCtx.Handler.ExecuteResume(smCtx.InputArbitraryData, smCtx.TransitionHistory)
+		executionEvent, outputData, err = smCtx.Handler.ExecuteResume(inputArbitraryData, smCtx.TransitionHistory)
 
 	default: // not sure what happened so let's park it
 		executionEvent = OnParked
 	}
-
+	smCtx.OutputArbitraryData = outputData
 	return executionEvent, err
 }
 
@@ -118,17 +118,18 @@ func restartExecutionFromState(state State, smCtx *Context) (Event, error) {
 
 func (smCtx *Context) Handle() (executionEvent Event, err error) {
 
-	inputArbitraryData := CopyMap(smCtx.InputArbitraryData)
-	outputArbitraryData := CopyMap(smCtx.InputArbitraryData)
+	inputArbitraryData := CopyMap(smCtx.InputArbitraryData) // this will end up with the same value as out
+	outputArbitraryData := inputArbitraryData
 
 	defer func() {
-		err = smCtx.finishHandlingContext(executionEvent, inputArbitraryData, outputArbitraryData)
+		err = smCtx.finishHandlingContext(executionEvent, smCtx.InputArbitraryData, outputArbitraryData)
 		if err != nil {
 			executionEvent = OnError
 		}
 	}()
 
-	executionEvent, err = DetermineExecutionAction(smCtx)
+	executionEvent, err = DetermineExecutionAction(inputArbitraryData, smCtx)
+	outputArbitraryData = CopyMap(smCtx.OutputArbitraryData)
 
 	return executionEvent, err
 }

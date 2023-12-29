@@ -175,13 +175,13 @@ type StateMachine struct {
 	CurrentArbitraryData map[string]interface{} `json:"currentArbitraryData"` // Additional field for storing arbitrary data
 	CreatedTimestamp     time.Time              `json:"createdTimestamp"`
 	UpdatedTimestamp     time.Time              `json:"updatedTimestamp"`
-	UnlockedTimestamp    time.Time              `json:"unlockedTimestamp"`
+	UnlockedTimestamp    *time.Time             `json:"unlockedTimestamp"`
 	LockType             LockType               `json:"lockType"`
 	RetryCount           int                    `json:"retryCount"`
 	RetryType            RetryType              `json:"retryType"`
 	MaxTimeout           time.Duration          `json:"maxTimeout"`
 	BaseDelay            time.Duration          `json:"baseDelay"`
-	LastRetry            time.Time              `json:"lastRetry"`
+	LastRetry            *time.Time             `json:"lastRetry"`
 	SerializedState      []byte                 `json:"-"`
 }
 
@@ -404,10 +404,6 @@ func (sm *StateMachine) processStateMachine(context *Context) error {
 		sm.CurrentArbitraryData = make(map[string]interface{})
 	}
 
-	if sm.Handlers == nil || len(sm.Handlers) == 0 {
-		return fmt.Errorf("no handlers found")
-	}
-
 	var handler Handler
 	// Let's check if this is a success and we are done
 	if sm.ResumeFromStep >= len(sm.Handlers) || sm.ResumeFromStep < 0 {
@@ -521,7 +517,8 @@ func (sm *StateMachine) handleTransition(context *Context, event Event) error {
 		if newState == sm.CurrentState {
 			sm.RetryCount++
 		}
-		sm.LastRetry = time.Now()
+		lastRetry := time.Now()
+		sm.LastRetry = &lastRetry
 		remainingDelay = sm.GetRemainingDelay()
 		shouldRetry = true
 

@@ -110,7 +110,8 @@ func CreateStateMachineTableIfNotExists(db *sql.DB, stateMachineName string) err
             UpdatedTimestamp TIMESTAMP,
             UsesGlobalLock BOOLEAN,
             UsesLocalLock BOOLEAN,
-			UnlockTimestamp TIMESTAMP NULL,  
+			UnlockedTimestamp TIMESTAMP NULL,  
+			LastRetryTimestamp TIMESTAMP NULL,  
 			INDEX (LookupKey)
             -- Add other columns as needed
         );`, normalizeTableName(stateMachineName))
@@ -176,9 +177,24 @@ func obtainLocalLock(tx *sql.Tx, sm *StateMachine) error {
 		usesLocalLock = true
 	}
 
+	// Convert zero time.Time to nil for SQL insertion
+	var unlockedTimestamp interface{}
+	if sm.UnlockedTimestamp.IsZero() {
+		unlockedTimestamp = nil
+	} else {
+		unlockedTimestamp = sm.UnlockedTimestamp.UTC()
+	}
+
+	var lastRetry interface{}
+	if sm.LastRetry.IsZero() {
+		lastRetry = nil
+	} else {
+		lastRetry = sm.LastRetry.UTC()
+	}
+
 	// Insert a new local lock record into the state machine's table with the custom lookup key.
-	_, err = tx.Exec(fmt.Sprintf("INSERT INTO %s (ID, CurrentState, LookupKey, ResumeFromStep, SaveAfterStep, KafkaEventTopic, SerializedState, CreatedTimestamp, UpdatedTimestamp, UsesGlobalLock, UsesLocalLock, UnlockTimestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);", normalizeTableName(sm.Name)),
-		sm.ID, sm.CurrentState, sm.LookupKey, sm.ResumeFromStep, sm.SaveAfterEachStep, sm.KafkaEventTopic, string(serializedState), sm.CreatedTimestamp, sm.UpdatedTimestamp, usesGlobalLock, usesLocalLock)
+	_, err = tx.Exec(fmt.Sprintf("INSERT INTO %s (ID, CurrentState, LookupKey, ResumeFromStep, SaveAfterStep, KafkaEventTopic, SerializedState, CreatedTimestamp, UpdatedTimestamp, UsesGlobalLock, UnlockedTimestamp, LastRetryTimestamp, UsesLocalLock, UnlockTimestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);", normalizeTableName(sm.Name)),
+		sm.ID, sm.CurrentState, sm.LookupKey, sm.ResumeFromStep, sm.SaveAfterEachStep, sm.KafkaEventTopic, string(serializedState), sm.CreatedTimestamp, sm.UpdatedTimestamp, unlockedTimestamp, lastRetry, usesGlobalLock, usesLocalLock)
 
 	if err != nil {
 		return err
@@ -191,8 +207,8 @@ func obtainLocalLock(tx *sql.Tx, sm *StateMachine) error {
 func insertStateMachine(sm *StateMachine) error {
 	tableName := normalizeTableName(sm.Name)
 	insertSQL := fmt.Sprintf(`
-        INSERT INTO %s (ID, CurrentState, LookupKey, ResumeFromStep, SaveAfterStep, KafkaEventTopic, SerializedState, CreatedTimestamp, UpdatedTimestamp, UsesGlobalLock, UsesLocalLock)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`, tableName)
+        INSERT INTO %s (ID, CurrentState, LookupKey, ResumeFromStep, SaveAfterStep, KafkaEventTopic, SerializedState, CreatedTimestamp, UpdatedTimestamp, UnlockedTimestamp, LastRetryTimestamp, UsesGlobalLock, UsesLocalLock)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`, tableName)
 
 	serializedState, err := sm.serializeToJSON()
 	if err != nil {
@@ -207,8 +223,23 @@ func insertStateMachine(sm *StateMachine) error {
 		usesLocalLock = true
 	}
 
+	// Convert zero time.Time to nil for SQL insertion
+	var unlockedTimestamp interface{}
+	if sm.UnlockedTimestamp == nil {
+		unlockedTimestamp = nil
+	} else {
+		unlockedTimestamp = sm.UnlockedTimestamp.UTC()
+	}
+
+	var lastRetry interface{}
+	if sm.LastRetry == nil {
+		lastRetry = nil
+	} else {
+		lastRetry = sm.LastRetry.UTC()
+	}
+
 	// Execute the SQL statement within the transaction
-	_, err = sm.DB.Exec(insertSQL, sm.ID, sm.CurrentState, sm.LookupKey, sm.ResumeFromStep, sm.SaveAfterEachStep, sm.KafkaEventTopic, string(serializedState), sm.CreatedTimestamp.UTC(), sm.UpdatedTimestamp.UTC(), usesGlobalLock, usesLocalLock)
+	_, err = sm.DB.Exec(insertSQL, sm.ID, sm.CurrentState, sm.LookupKey, sm.ResumeFromStep, sm.SaveAfterEachStep, sm.KafkaEventTopic, string(serializedState), sm.CreatedTimestamp.UTC(), sm.UpdatedTimestamp.UTC(), unlockedTimestamp, lastRetry, usesGlobalLock, usesLocalLock)
 
 	return err
 }
@@ -296,10 +327,11 @@ func loadStateMachineWithNoLock(sm *StateMachine) (*StateMachine, error) {
 		}
 
 		if unlockedTimestampStr.Valid {
-			sm.UnlockedTimestamp, err = parseTimestamp(unlockedTimestampStr.String)
+			unlockedTimestamp, err := parseTimestamp(unlockedTimestampStr.String)
 			if err != nil {
 				return nil, err
 			}
+			sm.UnlockedTimestamp = &unlockedTimestamp
 		}
 	}
 
@@ -347,11 +379,11 @@ func loadStateMachine(tx *sql.Tx, sm *StateMachine) (*StateMachine, error) {
 	}
 
 	if unlockedTimestampStr.Valid {
-		loadedSM.UnlockedTimestamp, err = parseTimestamp(unlockedTimestampStr.String)
+		unlockedTimestamp, err := parseTimestamp(unlockedTimestampStr.String)
 		if err != nil {
-			tx.Rollback()
 			return nil, err
 		}
+		loadedSM.UnlockedTimestamp = &unlockedTimestamp
 	}
 
 	loadedSM.SerializedState = serializedState
