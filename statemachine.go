@@ -38,6 +38,10 @@ const (
 	OnAfterEvent
 	OnCompleted
 	OnRollbackCompleted
+	OnAlreadyRollbackCompleted
+	OnRollbackFailed
+	OnCancelled
+	OnParked
 )
 
 func (e Event) String() string {
@@ -72,6 +76,14 @@ func (e Event) String() string {
 		return "OnCompleted"
 	case OnRollbackCompleted:
 		return "OnRollbackCompleted"
+	case OnAlreadyRollbackCompleted:
+		return "OnAlreadyRollbackCompleted"
+	case OnRollbackFailed:
+		return "OnRollbackFailed"
+	case OnCancelled:
+		return "OnCancelled"
+	case OnParked:
+		return "OnParked"
 	default:
 		return fmt.Sprintf("UnknownEvent(%d)", e)
 	}
@@ -86,40 +98,59 @@ func (s State) String() string {
 const (
 
 	// StatePending is the initial state of a state machine waiting to be picked up.
+	// ExecuteForward
 	StatePending State = "pending"
 
 	// StateOpen is the state of a state machine when it is in progress and not locked.
+	// ExecuteForward
 	StateOpen State = "open"
 
 	// StateInProgress is the state of a state machine when it is in progress and locked.
+	// ExecuteForward
 	StateInProgress State = "in_progress"
 
 	// StateCompleted is the final state of a state machine.
+	// AlreadyCompleted - No action
 	StateCompleted State = "completed"
 
 	// StateFailed is the state of a state machine when it fails.
+	// AlreadyFailed - No action
 	StateFailed State = "failed"
 
 	// StateRetry is the state of a state machine when it needs to retry later.
+
 	StateRetry State = "retry"
 
 	// StateFailed is the state of a state machine when it fails.
+	// ExecuteBackward
 	StateRollback State = "rollback"
 
+	// StateRollbackFailed is the state of a state machine when its rollback fails.
+	// AlreadyRollbackFailed - No action
+	StateRollbackFailed State = "rollback_failed"
+
 	// StateRollbackCompleted is the state of a state machine when its rollback is completed.
+	// AlreadyRollbackCompleted - No action
 	StateRollbackCompleted State = "rollback_completed"
 
 	// StatePaused is the state of a state machine when it is paused.
+	// ExecutePause
 	StatePaused State = "paused"
 
 	// StatePaused is the state of a state machine when it is paused.
+	// ExecuteResume
 	StateResume State = "resume"
 
 	// StateCancelled is the state of a state machine when it is cancelled.
+	// AlreadyCancelled - No action
 	StateCancelled State = "cancelled"
 
 	// StateParked is the state of a state machine when it is parked because we don't know what to do with it.
+	// AlreadyParked - No Action
 	StateParked State = "parked"
+
+	// StateUnknown is the state of a state machine when it is in an unknown state.
+	StateUnknown State = "unknown"
 
 	// AnyState is a special state that can be used to indicate that a transition can happen from any state.
 	AnyState State = "any"
@@ -421,7 +452,7 @@ func (sm *StateMachine) Run() error {
 
 	context := &Context{
 		InputState:          sm.CurrentState,
-		InputArbitraryData:  make(map[string]interface{}),
+		InputArbitraryData:  CopyMap(sm.CurrentArbitraryData),
 		OutputArbitraryData: make(map[string]interface{}),
 		StepNumber:          sm.ResumeFromStep,
 		TransitionHistory:   sm.History,
@@ -448,6 +479,14 @@ func (sm *StateMachine) Run() error {
 	}
 
 	handler := sm.Handlers[sm.ResumeFromStep]
+	var handler Handler
+	// Let's check if this is a success and we are done
+	if sm.ResumeFromStep >= len(sm.Handlers) || sm.ResumeFromStep < 0 {
+		handler = &CompleteHandler{}
+	} else {
+		handler = sm.Handlers[sm.ResumeFromStep]
+	}
+
 	context.Handler = handler
 
 	executionEvent, err := context.Handle()
@@ -512,9 +551,10 @@ func (sm *StateMachine) handleTransition(context *Context, event Event) error {
 		// we're moving forward direction and the FromStep is the previous step for our history entry
 		historyEntry.FromStep = stepNumber - 1
 		sm.ResumeFromStep = stepNumber + 1
-
 	case OnResetTimeout:
 		newState = StateRollback
+		historyEntry.FromStep = stepNumber
+		sm.ResumeFromStep = stepNumber - 1
 	case OnPause:
 		newState = StatePaused
 	case OnAlreadyCompleted:
@@ -527,6 +567,10 @@ func (sm *StateMachine) handleTransition(context *Context, event Event) error {
 			// if we were, we would have set the resume step to the current step
 			sm.ResumeFromStep = stepNumber - 1
 		}
+
+		historyEntry.FromStep = stepNumber
+		sm.ResumeFromStep = stepNumber
+
 	case OnResume:
 		newState = StateOpen
 	case OnRetry:
@@ -585,6 +629,12 @@ func (sm *StateMachine) handleTransition(context *Context, event Event) error {
 				}
 			}
 			return nil
+		}
+	} else {
+		if sm.ExecuteSynchronously {
+			if !IsTerminalState(sm.CurrentState) {
+				return sm.Run()
+			}
 		}
 	}
 

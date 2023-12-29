@@ -1,28 +1,28 @@
 package statemachine
 
-type defaultHandler struct {
+type CompleteHandler struct {
 }
 
-func (handler *defaultHandler) Name() string {
-	return "DefaultHandler" // Provide a default name for the handler
+func (handler *CompleteHandler) Name() string {
+	return "CompleteHandler" // Provide a default name for the handler
 }
 
-func (handler *defaultHandler) ExecuteForward(data map[string]interface{}, transitionHistory []TransitionHistory) (Event, map[string]interface{}, error) {
+func (handler *CompleteHandler) ExecuteForward(data map[string]interface{}, transitionHistory []TransitionHistory) (Event, map[string]interface{}, error) {
 	// Return the modified data
-	return OnSuccess, data, nil
+	return OnCompleted, data, nil
 }
 
-func (dh *defaultHandler) ExecuteBackward(data map[string]interface{}, transitionHistory []TransitionHistory) (Event, map[string]interface{}, error) {
+func (dh *CompleteHandler) ExecuteBackward(data map[string]interface{}, transitionHistory []TransitionHistory) (Event, map[string]interface{}, error) {
 	// Implement backward action logic here.
 	return OnSuccess, data, nil
 }
 
-func (dh *defaultHandler) ExecutePause(data map[string]interface{}, transitionHistory []TransitionHistory) (Event, map[string]interface{}, error) {
+func (dh *CompleteHandler) ExecutePause(data map[string]interface{}, transitionHistory []TransitionHistory) (Event, map[string]interface{}, error) {
 	// Implement backward action logic here.
-	return OnFailed, data, nil
+	return OnSuccess, data, nil
 }
 
-func (dh *defaultHandler) ExecuteResume(data map[string]interface{}, transitionHistory []TransitionHistory) (Event, map[string]interface{}, error) {
+func (dh *CompleteHandler) ExecuteResume(data map[string]interface{}, transitionHistory []TransitionHistory) (Event, map[string]interface{}, error) {
 	// Implement backward action logic here.
-	return OnFailed, data, nil
+	return OnSuccess, data, nil
 }
