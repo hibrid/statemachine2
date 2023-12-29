@@ -171,20 +171,18 @@ type StateMachine struct {
 	KafkaEventTopic      string                    `json:"kafkaEventTopic"`      // Kafka topic to send events
 	History              []TransitionHistory       `json:"history"`              // History of executed transitions
 	ExecuteSynchronously bool                      `json:"executeSynchronously"` // Flag to control whether to execute the next step immediately
-	// Additional field for storing arbitrary data
-	CurrentArbitraryData map[string]interface{} `json:"currentArbitraryData"`
+
+	CurrentArbitraryData map[string]interface{} `json:"currentArbitraryData"` // Additional field for storing arbitrary data
 	CreatedTimestamp     time.Time              `json:"createdTimestamp"`
 	UpdatedTimestamp     time.Time              `json:"updatedTimestamp"`
 	UnlockedTimestamp    time.Time              `json:"unlockedTimestamp"`
-	//UsesGlobalLock       bool                   `json:"usesGlobalLock"`
-	//UsesLocalLock        bool                   `json:"usesLocalLock"`
-	LockType        LockType      `json:"lockType"`
-	RetryCount      int           `json:"retryCount"`
-	RetryType       RetryType     `json:"retryType"`
-	MaxTimeout      time.Duration `json:"maxTimeout"`
-	BaseDelay       time.Duration `json:"baseDelay"`
-	LastRetry       time.Time     `json:"lastRetry"`
-	SerializedState []byte        `json:"-"`
+	LockType             LockType               `json:"lockType"`
+	RetryCount           int                    `json:"retryCount"`
+	RetryType            RetryType              `json:"retryType"`
+	MaxTimeout           time.Duration          `json:"maxTimeout"`
+	BaseDelay            time.Duration          `json:"baseDelay"`
+	LastRetry            time.Time              `json:"lastRetry"`
+	SerializedState      []byte                 `json:"-"`
 }
 
 type LockType int
@@ -194,6 +192,19 @@ const (
 	GlobalLock
 	LocalLock
 )
+
+func (lt LockType) String() string {
+	switch lt {
+	case NoLock:
+		return "NoLock"
+	case GlobalLock:
+		return "GlobalLock"
+	case LocalLock:
+		return "LocalLock"
+	default:
+		return fmt.Sprintf("UnknownLockType(%d)", lt)
+	}
+}
 
 type RetryType string
 
@@ -397,17 +408,14 @@ func (sm *StateMachine) processStateMachine(context *Context) error {
 		return fmt.Errorf("no handlers found")
 	}
 
-	var terminalEvent Event
-
-	if sm.ResumeFromStep >= len(sm.Handlers) {
-		terminalEvent = OnCompleted
-		return sm.handleEvent(context, terminalEvent)
-	} else if sm.ResumeFromStep < 0 {
-		terminalEvent = OnRollbackCompleted
-		return sm.handleEvent(context, terminalEvent)
+	var handler Handler
+	// Let's check if this is a success and we are done
+	if sm.ResumeFromStep >= len(sm.Handlers) || sm.ResumeFromStep < 0 {
+		handler = &completeHandler{}
+	} else {
+		handler = sm.Handlers[sm.ResumeFromStep]
 	}
 
-	handler := sm.Handlers[sm.ResumeFromStep]
 	context.Handler = handler
 
 	executionEvent, err := context.Handle()
@@ -419,10 +427,11 @@ func (sm *StateMachine) processStateMachine(context *Context) error {
 }
 
 // createContext creates a new context for the state machine.
+// important that we need to copy the map to avoid referencing the same space in memory as we manipulate the data
 func (sm *StateMachine) createContext() *Context {
 	return &Context{
 		InputState:          sm.CurrentState,
-		InputArbitraryData:  make(map[string]interface{}),
+		InputArbitraryData:  CopyMap(sm.CurrentArbitraryData),
 		OutputArbitraryData: make(map[string]interface{}),
 		StepNumber:          sm.ResumeFromStep,
 		TransitionHistory:   sm.History,
@@ -437,66 +446,6 @@ func (sm *StateMachine) validateHandlers() error {
 	}
 	return nil
 }
-
-/*
-// Start begins the execution of the state machine.
-func (sm *StateMachine) Run() error {
-
-	// Check for locks if necessary
-	if sm.shouldCheckLocks() {
-		// Lock checking logic here
-		if err := sm.checkLocks(); err != nil {
-			return err
-		}
-	}
-
-	context := &Context{
-		InputState:          sm.CurrentState,
-		InputArbitraryData:  CopyMap(sm.CurrentArbitraryData),
-		OutputArbitraryData: make(map[string]interface{}),
-		StepNumber:          sm.ResumeFromStep,
-		TransitionHistory:   sm.History,
-		StateMachine:        sm,
-	}
-
-	// Check that CurrentArbitraryData is not nil
-	if sm.CurrentArbitraryData == nil {
-		sm.CurrentArbitraryData = make(map[string]interface{})
-	}
-
-	if sm.Handlers == nil || len(sm.Handlers) == 0 {
-		return fmt.Errorf("no handlers found")
-	}
-
-	var terminalEvent Event
-
-	if sm.ResumeFromStep >= len(sm.Handlers) {
-		terminalEvent = OnCompleted
-		return sm.handleEvent(context, terminalEvent)
-	} else if sm.ResumeFromStep < 0 {
-		terminalEvent = OnRollbackCompleted
-		return sm.handleEvent(context, terminalEvent)
-	}
-
-	handler := sm.Handlers[sm.ResumeFromStep]
-	var handler Handler
-	// Let's check if this is a success and we are done
-	if sm.ResumeFromStep >= len(sm.Handlers) || sm.ResumeFromStep < 0 {
-		handler = &CompleteHandler{}
-	} else {
-		handler = sm.Handlers[sm.ResumeFromStep]
-	}
-
-	context.Handler = handler
-
-	executionEvent, err := context.Handle()
-	if err != nil {
-		return err
-	}
-
-	return sm.handleEvent(context, executionEvent)
-}
-*/
 
 func (sm *StateMachine) handleEvent(context *Context, event Event) error {
 	err := sm.HandleEvent(context, event)
@@ -553,8 +502,6 @@ func (sm *StateMachine) handleTransition(context *Context, event Event) error {
 		sm.ResumeFromStep = stepNumber + 1
 	case OnResetTimeout:
 		newState = StateRollback
-		historyEntry.FromStep = stepNumber
-		sm.ResumeFromStep = stepNumber - 1
 	case OnPause:
 		newState = StatePaused
 	case OnAlreadyCompleted:
@@ -567,10 +514,6 @@ func (sm *StateMachine) handleTransition(context *Context, event Event) error {
 			// if we were, we would have set the resume step to the current step
 			sm.ResumeFromStep = stepNumber - 1
 		}
-
-		historyEntry.FromStep = stepNumber
-		sm.ResumeFromStep = stepNumber
-
 	case OnResume:
 		newState = StateOpen
 	case OnRetry:
@@ -620,7 +563,9 @@ func (sm *StateMachine) handleTransition(context *Context, event Event) error {
 			if remainingDelay > 0 {
 				time.Sleep(remainingDelay)
 			}
-			return sm.Run()
+			if !IsTerminalState(sm.CurrentState) {
+				return sm.Run()
+			}
 		} else {
 			// Send Kafka event if configured
 			if sm.KafkaEventTopic != "" {
@@ -663,14 +608,14 @@ func (sm *StateMachine) checkAndObtainGlobalLock() error {
 	}
 	defer tx.Rollback() // Rollback the transaction if it's not committed.
 
-	// Check if a global lock exists for this state machine.
+	// Check if a global lock exists for this LookupKey.
 	lockExists, err := checkGlobalLockExists(tx, sm)
 	if err != nil {
 		return err
 	}
 
 	if lockExists {
-		// A global lock exists for this state machine.
+		// A global lock exists for this state machine and LookupKey.
 		// Check if this instance owns the lock.
 		if ownedByThisInstance, err := isGlobalLockOwnedByThisInstance(tx, sm); err != nil {
 			return err

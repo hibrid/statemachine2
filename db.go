@@ -44,7 +44,7 @@ func CreateGlobalLockTableIfNotExists(db *sql.DB) error {
 func isGlobalLockOwnedByThisInstance(tx *sql.Tx, sm *StateMachine) (bool, error) {
 	// Query the GLOBAL_LOCK table to check if the global lock is owned by this instance.
 	var ownerStateMachineID string
-	err := tx.QueryRow("SELECT StateMachineID FROM GLOBAL_LOCK WHERE StateMachineType = ? AND StateMachineID = ? AND (UnlockTimestamp IS NULL OR UnlockTimestamp > NOW()) FOR UPDATE;", sm.Name, sm.ID).Scan(&ownerStateMachineID)
+	err := tx.QueryRow("SELECT StateMachineID FROM GLOBAL_LOCK WHERE StateMachineType = ? AND StateMachineID = ? AND LookupKey = ? AND (UnlockTimestamp IS NULL OR UnlockTimestamp > NOW()) FOR UPDATE;", sm.Name, sm.ID, sm.LookupKey).Scan(&ownerStateMachineID)
 	if err == nil {
 		// The global lock is owned by this instance.
 		return true, nil
@@ -60,7 +60,7 @@ func isGlobalLockOwnedByThisInstance(tx *sql.Tx, sm *StateMachine) (bool, error)
 func checkGlobalLockExists(tx *sql.Tx, sm *StateMachine) (bool, error) {
 	// Check if any open global lock exists for the same type.
 	var existingLockID int
-	err := tx.QueryRow("SELECT ID FROM GLOBAL_LOCK WHERE StateMachineType = ? AND (UnlockTimestamp IS NULL OR UnlockTimestamp > NOW()) FOR UPDATE;", sm.Name).Scan(&existingLockID)
+	err := tx.QueryRow("SELECT ID FROM GLOBAL_LOCK WHERE LookupKey = ? AND (UnlockTimestamp IS NULL OR UnlockTimestamp > NOW()) FOR UPDATE;", sm.LookupKey).Scan(&existingLockID)
 	if err == nil {
 		// A global lock with the same type is active.
 		return true, nil
@@ -168,9 +168,17 @@ func obtainLocalLock(tx *sql.Tx, sm *StateMachine) error {
 		return err
 	}
 
+	var usesGlobalLock, usesLocalLock bool
+	if sm.LockType == GlobalLock {
+		usesGlobalLock = true
+	}
+	if sm.LockType == LocalLock {
+		usesLocalLock = true
+	}
+
 	// Insert a new local lock record into the state machine's table with the custom lookup key.
 	_, err = tx.Exec(fmt.Sprintf("INSERT INTO %s (ID, CurrentState, LookupKey, ResumeFromStep, SaveAfterStep, KafkaEventTopic, SerializedState, CreatedTimestamp, UpdatedTimestamp, UsesGlobalLock, UsesLocalLock, UnlockTimestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);", normalizeTableName(sm.Name)),
-		sm.ID, sm.CurrentState, sm.LookupKey, sm.ResumeFromStep, sm.SaveAfterEachStep, sm.KafkaEventTopic, string(serializedState), sm.CreatedTimestamp, sm.UpdatedTimestamp, sm.UsesGlobalLock, sm.UsesLocalLock)
+		sm.ID, sm.CurrentState, sm.LookupKey, sm.ResumeFromStep, sm.SaveAfterEachStep, sm.KafkaEventTopic, string(serializedState), sm.CreatedTimestamp, sm.UpdatedTimestamp, usesGlobalLock, usesLocalLock)
 
 	if err != nil {
 		return err
@@ -191,8 +199,16 @@ func insertStateMachine(sm *StateMachine) error {
 		return err
 	}
 
+	var usesGlobalLock, usesLocalLock bool
+	if sm.LockType == GlobalLock {
+		usesGlobalLock = true
+	}
+	if sm.LockType == LocalLock {
+		usesLocalLock = true
+	}
+
 	// Execute the SQL statement within the transaction
-	_, err = sm.DB.Exec(insertSQL, sm.ID, sm.CurrentState, sm.LookupKey, sm.ResumeFromStep, sm.SaveAfterEachStep, sm.KafkaEventTopic, string(serializedState), sm.CreatedTimestamp.UTC(), sm.UpdatedTimestamp.UTC(), sm.UsesGlobalLock, sm.UsesLocalLock)
+	_, err = sm.DB.Exec(insertSQL, sm.ID, sm.CurrentState, sm.LookupKey, sm.ResumeFromStep, sm.SaveAfterEachStep, sm.KafkaEventTopic, string(serializedState), sm.CreatedTimestamp.UTC(), sm.UpdatedTimestamp.UTC(), usesGlobalLock, usesLocalLock)
 
 	return err
 }
@@ -213,10 +229,18 @@ func queryStateMachinesByType(db *sql.DB, stateMachineName string) ([]StateMachi
 	var serializedState string
 	for rows.Next() {
 		var sm StateMachine
+		var usesGlobalLock, usesLocalLock sql.NullBool
+
 		// Scan row data into sm fields
-		err := rows.Scan(&sm.ID, &sm.CurrentState, &sm.ResumeFromStep, &sm.SaveAfterEachStep, &sm.KafkaEventTopic, serializedState, &sm.CreatedTimestamp, &sm.UpdatedTimestamp, &sm.UsesGlobalLock, &sm.UsesLocalLock)
+		err := rows.Scan(&sm.ID, &sm.CurrentState, &sm.ResumeFromStep, &sm.SaveAfterEachStep, &sm.KafkaEventTopic, serializedState, &sm.CreatedTimestamp, &sm.UpdatedTimestamp, &usesGlobalLock, &usesLocalLock)
 		if err != nil {
 			return nil, err
+		}
+		if usesGlobalLock.Valid && usesGlobalLock.Bool {
+			sm.LockType = GlobalLock
+		}
+		if usesLocalLock.Valid && usesLocalLock.Bool {
+			sm.LockType = LocalLock
 		}
 		stateMachines = append(stateMachines, sm)
 	}
@@ -243,11 +267,20 @@ func loadStateMachineWithNoLock(sm *StateMachine) (*StateMachine, error) {
 	var serializedState string
 	var createdTimestampStr, updatedTimestampStr, unlockedTimestampStr sql.NullString
 	for rows.Next() {
+		var usesGlobalLock, usesLocalLock sql.NullBool
 		// Scan row data into sm fields
-		err := rows.Scan(&sm.ID, &sm.CurrentState, &sm.ResumeFromStep, &sm.SaveAfterEachStep, &sm.KafkaEventTopic, serializedState, &sm.CreatedTimestamp, &sm.UpdatedTimestamp, &sm.UsesGlobalLock, &sm.UsesLocalLock)
+		err := rows.Scan(&sm.ID, &sm.CurrentState, &sm.ResumeFromStep, &sm.SaveAfterEachStep, &sm.KafkaEventTopic, serializedState, &sm.CreatedTimestamp, &sm.UpdatedTimestamp, &usesGlobalLock, &usesLocalLock)
 		if err != nil {
 			return nil, err
 		}
+
+		if usesGlobalLock.Valid && usesGlobalLock.Bool {
+			sm.LockType = GlobalLock
+		}
+		if usesLocalLock.Valid && usesLocalLock.Bool {
+			sm.LockType = LocalLock
+		}
+
 		if createdTimestampStr.Valid {
 			sm.CreatedTimestamp, err = parseTimestamp(createdTimestampStr.String)
 			if err != nil {
@@ -280,13 +313,21 @@ func loadStateMachine(tx *sql.Tx, sm *StateMachine) (*StateMachine, error) {
 	var loadedSM StateMachine
 	var serializedState []byte
 	var createdTimestampStr, updatedTimestampStr, unlockedTimestampStr sql.NullString
+	var usesGlobalLock, usesLocalLock sql.NullBool
 
-	err := tx.QueryRow(querySQL, sm.ID).Scan(&loadedSM.ID, &loadedSM.CurrentState, &loadedSM.LookupKey, &loadedSM.ResumeFromStep, &loadedSM.SaveAfterEachStep, &loadedSM.KafkaEventTopic, &serializedState, &createdTimestampStr, &updatedTimestampStr, &loadedSM.UsesGlobalLock, &loadedSM.UsesLocalLock, &unlockedTimestampStr)
+	err := tx.QueryRow(querySQL, sm.ID).Scan(&loadedSM.ID, &loadedSM.CurrentState, &loadedSM.LookupKey, &loadedSM.ResumeFromStep, &loadedSM.SaveAfterEachStep, &loadedSM.KafkaEventTopic, &serializedState, &createdTimestampStr, &updatedTimestampStr, &usesGlobalLock, &usesLocalLock, &unlockedTimestampStr)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("state machine not found")
 		}
 		return nil, err
+	}
+
+	if usesGlobalLock.Valid && usesGlobalLock.Bool {
+		loadedSM.LockType = GlobalLock
+	}
+	if usesLocalLock.Valid && usesLocalLock.Bool {
+		loadedSM.LockType = LocalLock
 	}
 
 	if createdTimestampStr.Valid {

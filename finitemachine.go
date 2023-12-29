@@ -1,5 +1,7 @@
 package statemachine
 
+import "errors"
+
 // Context represents the context of the state machine.
 type Context struct {
 	InputState          State                     `json:"inputState"`
@@ -27,7 +29,7 @@ func (smCtx *Context) finishHandlingContext(event Event, input, output map[strin
 	return nil
 }
 
-func DetermineExecutionAction(smCtx *Context) (executionEvent Event, err error) {
+func DetermineTerminalStateEvent(smCtx *Context) (executionEvent Event) {
 	switch smCtx.InputState {
 	case StateCompleted:
 		executionEvent = OnAlreadyCompleted
@@ -48,7 +50,17 @@ func DetermineExecutionAction(smCtx *Context) (executionEvent Event, err error) 
 	case StateCancelled:
 		executionEvent = OnCancelled
 		// Skip this step
+	}
+	return executionEvent
+}
 
+// DetermineExecutionAction determines the execution action based on the input state.
+func DetermineExecutionAction(smCtx *Context) (executionEvent Event, err error) {
+	if IsTerminalState(smCtx.InputState) {
+		return DetermineTerminalStateEvent(smCtx), nil
+	}
+
+	switch smCtx.InputState {
 	case StateParked:
 		// If parked, try to restart execution based on previous state
 		lastState := getLastNonParkedState(smCtx.TransitionHistory)
@@ -97,6 +109,9 @@ func restartExecutionFromState(state State, smCtx *Context) (Event, error) {
 		executionEvent, _, err := smCtx.Handler.ExecuteResume(smCtx.InputArbitraryData, smCtx.TransitionHistory)
 		return executionEvent, err
 	default:
+		if IsTerminalState(state) {
+			return DetermineTerminalStateEvent(smCtx), errors.New("cannot restart execution from terminal state")
+		}
 		return OnFailed, nil
 	}
 }
