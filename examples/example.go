@@ -112,6 +112,7 @@ func main() {
 		Handlers:             nil,
 		ExecuteSynchronously: true,
 		RetryPolicy:          retryPolicy,
+		SaveAfterEachStep:    true,
 	}
 
 	sm, err := statemachine.NewStateMachine(config)
@@ -129,7 +130,6 @@ func main() {
 		EnterState: enterStateCallback,
 		LeaveState: leaveStateCallback,
 	})
-	sm.SaveAfterEachStep = true
 	testHandler := &TestHandler{}
 	sm.AddHandler(testHandler, testHandler.Name())
 	testHandler2 := &TestHandler2{}

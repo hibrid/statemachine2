@@ -434,9 +434,13 @@ func loadAndLockStateMachine(sm *StateMachine) (*StateMachine, error) {
 	return loadedSM, nil
 }
 
+// TODO: update for completed state for lock
+// TODO: remove lock from state machine
+// TODO: remove lock from global lock table
+// TODO: Update the lock logic to make sure it's not considering machine's that are in a terminal state or don't have a lock
 func updateStateMachineState(sm *StateMachine, newState State) error {
 	tableName := normalizeTableName(sm.Name)
-	updateSQL := fmt.Sprintf("UPDATE %s SET CurrentState = ?, SerializedState = ?, UpdatedTimestamp = NOW() WHERE ID = ?;", tableName)
+	updateSQL := fmt.Sprintf("UPDATE %s SET CurrentState = ?, SerializedState = ?, UpdatedTimestamp = NOW(), ResumeFromStep = ? WHERE ID = ?;", tableName)
 
 	tx, err := sm.DB.Begin()
 	if err != nil {
@@ -449,7 +453,7 @@ func updateStateMachineState(sm *StateMachine, newState State) error {
 		return err
 	}
 
-	_, err = tx.Exec(updateSQL, newState, newSerializedState, sm.ID)
+	_, err = tx.Exec(updateSQL, newState, newSerializedState, sm.ResumeFromStep, sm.ID)
 	if err != nil {
 		tx.Rollback()
 		return err

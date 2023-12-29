@@ -228,6 +228,7 @@ type StateMachineConfig struct {
 	ExecuteSynchronously bool
 	Handlers             []Handler
 	RetryPolicy          RetryPolicy
+	SaveAfterEachStep    bool
 }
 
 // TransitionHistory stores information about executed transitions.
@@ -720,6 +721,7 @@ func NewStateMachine(config StateMachineConfig) (*StateMachine, error) {
 		CreatedTimestamp:     time.Now(),
 		UpdatedTimestamp:     time.Now(),
 		CurrentState:         StatePending,
+		SaveAfterEachStep:    config.SaveAfterEachStep,
 	}
 
 	err = insertStateMachine(sm)
