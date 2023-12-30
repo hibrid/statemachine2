@@ -40,16 +40,65 @@ Provide clear usage examples and instructions in a readme.md file.
 
 
 
-Global Lock:
+### Global and Local Locks in the StateMachine System
 
-A global lock is a mechanism that ensures exclusive access to a shared resource or operation across all state machines, regardless of their types or users/accounts.
-When a state machine is configured with a global lock, it means that only one state machine can be processed at a time across the entire system.
-This lock is typically used for critical operations or resources that should not be accessed concurrently by multiple state machines, ensuring data integrity and consistency.
-Local Lock:
+#### Overview
 
-A local lock is a mechanism that ensures exclusive access to a shared resource or operation within a specific type of state machine or for a specific user/account.
-When a state machine is configured with a local lock, it means that only one state machine of the same type (state machine name) or for the same user/account can be processed at a time.
-This lock is useful when you want to prevent concurrent execution of state machines of the same type or for the same user/account, ensuring order and preventing conflicts.
+The StateMachine system utilizes two types of locking mechanisms, Global Locks and Local Locks, to manage data consistency and prevent concurrent modifications in a distributed environment. These locks are essential for controlling access and operations on state machine instances.
+
+#### Global Locks
+
+Global Locks are used to ensure that when a particular operation is in progress, no other operations (across all types of state machines) should take place using the same global identifier.
+
+- **Database Representation**: In the `GLOBAL_LOCK` table, a global lock is represented by:
+  - `LookupKey`: A global identifier used to lock across all state machine types.
+  - `UnlockTimestamp`: Indicates when the lock is released. A `NULL` or future timestamp signifies that the lock is currently held.
+
+- **Locked State**: A global lock is considered active (locked) if there is a record with a `NULL` or future `UnlockTimestamp` for a given `LookupKey`.
+
+- **Unlocked State**: The lock is considered inactive (unlocked) if the `UnlockTimestamp` is in the past or if no record exists for the specified `LookupKey`.
+
+- **Use Case Example**: A global lock is ideal in situations where an operation, such as a system-wide maintenance task, must prevent all other operations from occurring until it is complete.
+
+#### Local Locks
+
+Local Locks are designed for scenarios where multiple instances of a state machine can exist simultaneously, but each instance requires independent locking to avoid concurrent modifications.
+
+- **Database Representation**: In the state machine's specific table, a local lock is represented by:
+  - `ID`: The unique identifier of the state machine instance.
+  - `LookupKey`: A key used to identify the lock within the context of the state machine.
+  - `UsesLocalLock`: A boolean flag indicating if the local lock mechanism is active.
+  - `UnlockedTimestamp`: Indicates when the lock is released.
+
+- **Locked State**: A local lock is considered active if there is a record with `UsesLocalLock` set to `true` and a `NULL` or future `UnlockedTimestamp` for a given `LookupKey`.
+
+- **Unlocked State**: The lock is inactive if `UsesLocalLock` is `false`, the `UnlockedTimestamp` is in the past, or no record exists for the specified `LookupKey`.
+
+- **Use Case Example**: Local locks are suitable for scenarios where different instances of a state machine manage separate entities (e.g., individual user accounts), and each instance needs to be locked independently to prevent concurrent updates.
+
+#### Relationship Between Global and Local Locks
+
+- Both lock types can be used together to provide a comprehensive locking strategy. For example, a global lock can prevent any state machine operation system-wide, while local locks manage concurrency for individual instances.
+- Application logic should be designed to respect both locking mechanisms, ensuring that a global lock is not overridden by a local lock and vice versa.
+
+#### Examples in the Database
+
+- **Global Lock (Locked State)**:
+  ```
+  | LookupKey | UnlockTimestamp |
+  |-----------|-----------------|
+  | key123    | NULL            |
+  ```
+
+- **Local Lock (Locked State)**:
+  ```
+  | ID   | LookupKey | UsesLocalLock | UnlockedTimestamp |
+  |------|-----------|---------------|-------------------|
+  | 6789 | acct456   | true          | NULL              |
+  ```
+
+- **No Lock or Unlocked State**: The absence of a record with the relevant `LookupKey` or a record with a past `UnlockTimestamp` indicates no lock or an unlocked state.
+
 
 
 
@@ -57,23 +106,25 @@ State Machine Table (for tracking state machines):
 
 ID: Primary key, unique identifier for each state machine instance.
 Name: The name or type of the state machine.
-UserID: User or account identifier associated with the state machine.
+LookupKey: User or account identifier associated with the state machine.
 CurrentState: Current state of the state machine.
-Direction: Direction of movement (forward, backward).
 ResumeFromStep: The step to resume from when recreated.
 SaveAfterStep: Flag to indicate whether to save after each step.
 KafkaEventTopic: Kafka topic for events (nullable if not used).
 SerializedState: JSON serialized state data (to store arbitrary data).
 CreatedTimestamp: Timestamp when the state machine was created.
 UpdatedTimestamp: Timestamp when the state machine was last updated.
-IsGlobalLock: Flag to indicate if the state machine has a global lock.
-IsLocalLock: Flag to indicate if the state machine has a local lock.
-Any other columns specific to your requirements.
-The ID field should be unique for each state machine, and you can use it as the primary key. The Name field helps identify the type of state machine. The UserID field associates state machines with users or accounts.
+UsesGlobalLock: Flag to indicate if the state machine has a global lock.
+UsesLocalLock: Flag to indicate if the state machine has a local lock.
+UnlockedTimestamp: When the lock was removed
+LastRetryTimestamp: The last time a retry was attempted (does not include the original attempt)
+
 
 Global Lock Table (for tracking global locks):
 
 ID: Primary key, unique identifier for each global lock instance.
-StateMachineID: Foreign key referencing the state machine with a global lock.
+StateMachineType: The state machine name so we know where this lock originated
+StateMachineID: The unique ID for the state machine within the type of state machine
+LookupKey: The identifier that we're locking across all state machine types
 LockTimestamp: Timestamp when the global lock was acquired.
-The ID field should be unique for each global lock instance, and you can use it as the primary key. The StateMachineID field is a foreign key linking the global lock to the state machine it's associated with. The LockTimestamp field helps track when the lock was acquired.
+UnlockTimestamp: Timestamp when the glocal lock was removed

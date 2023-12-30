@@ -113,6 +113,7 @@ func main() {
 		ExecuteSynchronously: true,
 		RetryPolicy:          retryPolicy,
 		SaveAfterEachStep:    true,
+		LockType:             statemachine.LocalLock,
 	}
 
 	sm, err := statemachine.NewStateMachine(config)

@@ -159,7 +159,7 @@ const (
 // StateMachine represents a state machine instance.
 type StateMachine struct {
 	Name                 string                    `json:"name"`
-	ID                   string                    `json:"id"`
+	UniqueID             string                    `json:"id"`
 	Handlers             []Handler                 `json:"-"` // List of handlers with names
 	Callbacks            map[string]StateCallbacks `json:"-"`
 	CurrentState         State                     `json:"currentState"`
@@ -229,6 +229,7 @@ type StateMachineConfig struct {
 	Handlers             []Handler
 	RetryPolicy          RetryPolicy
 	SaveAfterEachStep    bool
+	LockType             LockType
 }
 
 // TransitionHistory stores information about executed transitions.
@@ -373,9 +374,9 @@ func (sm *StateMachine) GetRemainingDelay() time.Duration {
 func loadStateMachineFromDB(stateMachineType string, id string, db *sql.DB) (*StateMachine, error) {
 	// Load serialized state data from the database (replace with your database logic)
 	sm := &StateMachine{
-		ID:   id,
-		Name: stateMachineType,
-		DB:   db,
+		UniqueID: id,
+		Name:     stateMachineType,
+		DB:       db,
 	}
 	sm, err := loadAndLockStateMachine(sm)
 	if err != nil {
@@ -420,7 +421,7 @@ func (sm *StateMachine) processStateMachine(context *Context) error {
 		return err
 	}
 
-	return sm.handleEvent(context, executionEvent)
+	return sm.HandleEvent(context, executionEvent)
 }
 
 // createContext creates a new context for the state machine.
@@ -440,14 +441,6 @@ func (sm *StateMachine) createContext() *Context {
 func (sm *StateMachine) validateHandlers() error {
 	if sm.Handlers == nil || len(sm.Handlers) == 0 {
 		return fmt.Errorf("no handlers found")
-	}
-	return nil
-}
-
-func (sm *StateMachine) handleEvent(context *Context, event Event) error {
-	err := sm.HandleEvent(context, event)
-	if err != nil {
-		return err
 	}
 	return nil
 }
@@ -647,13 +640,19 @@ func (sm *StateMachine) checkAndObtainLocalLock() error {
 	}
 	defer tx.Rollback() // Rollback the transaction if it's not committed.
 
-	// Check if a local lock exists for this state machine.
-	lockExists, err := checkLocalLockExists(tx, sm)
+	// Check if a global lock exists for this LookupKey.
+	_, err = checkGlobalLockExists(tx, sm)
 	if err != nil {
 		return err
 	}
 
-	if lockExists {
+	// Check if a local lock exists for this state machine.
+	localLockExists, err := checkLocalLockExists(tx, sm)
+	if err != nil {
+		return err
+	}
+
+	if localLockExists {
 		// A local lock exists for this state machine.
 		// Check if this instance owns the lock.
 		if ownedByThisInstance, err := isLocalLockOwnedByThisInstance(tx, sm); err != nil {
@@ -712,7 +711,7 @@ func NewStateMachine(config StateMachineConfig) (*StateMachine, error) {
 
 	sm := &StateMachine{
 		Name:                 config.Name,
-		ID:                   config.UniqueStateMachineID,
+		UniqueID:             config.UniqueStateMachineID,
 		LookupKey:            config.LookupKey,
 		DB:                   config.DB,
 		KafkaProducer:        config.KafkaProducer,
@@ -740,7 +739,7 @@ func NewStateMachine(config StateMachineConfig) (*StateMachine, error) {
 }
 
 func (sm *StateMachine) SetUniqueID(uniqueStateMachineID string) *StateMachine {
-	sm.ID = uniqueStateMachineID
+	sm.UniqueID = uniqueStateMachineID
 	return sm
 }
 
@@ -801,7 +800,7 @@ func LoadStateMachine(name, id string, db *sql.DB) (*StateMachine, error) {
 
 	// Initialize the resumed state machine with additional information as needed
 	sm.Name = name
-	sm.ID = id
+	sm.UniqueID = id
 	sm.DB = db
 	sm.CurrentArbitraryData = resumedSMData
 
