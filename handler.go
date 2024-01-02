@@ -14,7 +14,7 @@ func (handler *completeHandler) ExecuteForward(data map[string]interface{}, tran
 
 func (dh *completeHandler) ExecuteBackward(data map[string]interface{}, transitionHistory []TransitionHistory) (BackwardEvent, map[string]interface{}, error) {
 	// Implement backward action logic here.
-	return BackwardSuccess, data, nil
+	return BackwardComplete, data, nil
 }
 
 func (dh *completeHandler) ExecutePause(data map[string]interface{}, transitionHistory []TransitionHistory) (PauseEvent, map[string]interface{}, error) {

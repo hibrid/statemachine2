@@ -115,7 +115,7 @@ func (e BackwardEvent) ToEvent() Event {
 	case BackwardSuccess:
 		return OnRollback
 	case BackwardComplete:
-		return OnCompleted
+		return OnRollbackCompleted
 	case BackwardFail:
 		return OnFailed
 	case BackwardRollback:

@@ -9,14 +9,14 @@
             "type": "go",
             "request": "launch",
             "mode": "auto",
-            "program": "${workspaceFolder}/forward/forward_example.go",
+            "program": "${workspaceFolder}/examples/forward/forward_example.go",
         },
         {
             "name": "Backward Example",
             "type": "go",
             "request": "launch",
             "mode": "auto",
-            "program": "${workspaceFolder}/backward/backward_example.go",
+            "program": "${workspaceFolder}/examples/backward/backward_example.go",
         }
     ]
 }
