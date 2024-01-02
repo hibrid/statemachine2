@@ -7,22 +7,22 @@ func (handler *completeHandler) Name() string {
 	return "CompleteHandler" // Provide a default name for the handler
 }
 
-func (handler *completeHandler) ExecuteForward(data map[string]interface{}, transitionHistory []TransitionHistory) (Event, map[string]interface{}, error) {
+func (handler *completeHandler) ExecuteForward(data map[string]interface{}, transitionHistory []TransitionHistory) (ForwardEvent, map[string]interface{}, error) {
 	// Return the modified data
-	return OnCompleted, data, nil
+	return ForwardComplete, data, nil
 }
 
-func (dh *completeHandler) ExecuteBackward(data map[string]interface{}, transitionHistory []TransitionHistory) (Event, map[string]interface{}, error) {
+func (dh *completeHandler) ExecuteBackward(data map[string]interface{}, transitionHistory []TransitionHistory) (BackwardEvent, map[string]interface{}, error) {
 	// Implement backward action logic here.
-	return OnSuccess, data, nil
+	return BackwardSuccess, data, nil
 }
 
-func (dh *completeHandler) ExecutePause(data map[string]interface{}, transitionHistory []TransitionHistory) (Event, map[string]interface{}, error) {
+func (dh *completeHandler) ExecutePause(data map[string]interface{}, transitionHistory []TransitionHistory) (PauseEvent, map[string]interface{}, error) {
 	// Implement backward action logic here.
-	return OnSuccess, data, nil
+	return PauseSuccess, data, nil
 }
 
-func (dh *completeHandler) ExecuteResume(data map[string]interface{}, transitionHistory []TransitionHistory) (Event, map[string]interface{}, error) {
+func (dh *completeHandler) ExecuteResume(data map[string]interface{}, transitionHistory []TransitionHistory) (ResumeEvent, map[string]interface{}, error) {
 	// Implement backward action logic here.
-	return OnSuccess, data, nil
+	return ResumeSuccess, data, nil
 }

@@ -17,28 +17,28 @@ func (handler *TestHandler) Name() string {
 	return "TestHandler" // Provide a default name for the handler
 }
 
-func (handler *TestHandler) ExecuteForward(data map[string]interface{}, transitionHistory []TransitionHistory) (Event, map[string]interface{}, error) {
+func (handler *TestHandler) ExecuteForward(data map[string]interface{}, transitionHistory []TransitionHistory) (ForwardEvent, map[string]interface{}, error) {
 	// Access and modify arbitrary data in the handler logic
 	data["key1"] = "new value1"
 	data["key3"] = 456
 
 	// Return the modified data
-	return OnSuccess, data, nil
+	return ForwardSuccess, data, nil
 }
 
-func (handler *TestHandler) ExecuteBackward(data map[string]interface{}, transitionHistory []TransitionHistory) (Event, map[string]interface{}, error) {
+func (handler *TestHandler) ExecuteBackward(data map[string]interface{}, transitionHistory []TransitionHistory) (BackwardEvent, map[string]interface{}, error) {
 	// Implement backward action logic here.
-	return OnRollback, data, nil
+	return BackwardSuccess, data, nil
 }
 
-func (handler *TestHandler) ExecutePause(data map[string]interface{}, transitionHistory []TransitionHistory) (Event, map[string]interface{}, error) {
+func (handler *TestHandler) ExecutePause(data map[string]interface{}, transitionHistory []TransitionHistory) (PauseEvent, map[string]interface{}, error) {
 	// Implement backward action logic here.
-	return OnFailed, data, nil
+	return PauseSuccess, data, nil
 }
 
-func (handler *TestHandler) ExecuteResume(data map[string]interface{}, transitionHistory []TransitionHistory) (Event, map[string]interface{}, error) {
+func (handler *TestHandler) ExecuteResume(data map[string]interface{}, transitionHistory []TransitionHistory) (ResumeEvent, map[string]interface{}, error) {
 	// Implement backward action logic here.
-	return OnFailed, data, nil
+	return ResumeSuccess, data, nil
 }
 
 type TestHandler2 struct {
@@ -48,28 +48,28 @@ func (handler *TestHandler2) Name() string {
 	return "TestHandler2" // Provide a default name for the handler
 }
 
-func (handler *TestHandler2) ExecuteForward(data map[string]interface{}, transitionHistory []TransitionHistory) (Event, map[string]interface{}, error) {
+func (handler *TestHandler2) ExecuteForward(data map[string]interface{}, transitionHistory []TransitionHistory) (ForwardEvent, map[string]interface{}, error) {
 	// Access and modify arbitrary data in the handler logic
 	data["key1"] = "new value2"
 	data["key3"] = 457
 
 	// Return the modified data
-	return OnSuccess, data, nil
+	return ForwardSuccess, data, nil
 }
 
-func (handler *TestHandler2) ExecuteBackward(data map[string]interface{}, transitionHistory []TransitionHistory) (Event, map[string]interface{}, error) {
+func (handler *TestHandler2) ExecuteBackward(data map[string]interface{}, transitionHistory []TransitionHistory) (BackwardEvent, map[string]interface{}, error) {
 	// Implement backward action logic here.
-	return OnSuccess, data, nil
+	return BackwardSuccess, data, nil
 }
 
-func (handler *TestHandler2) ExecutePause(data map[string]interface{}, transitionHistory []TransitionHistory) (Event, map[string]interface{}, error) {
+func (handler *TestHandler2) ExecutePause(data map[string]interface{}, transitionHistory []TransitionHistory) (PauseEvent, map[string]interface{}, error) {
 	// Implement backward action logic here.
-	return OnFailed, data, nil
+	return PauseSuccess, data, nil
 }
 
-func (handler *TestHandler2) ExecuteResume(data map[string]interface{}, transitionHistory []TransitionHistory) (Event, map[string]interface{}, error) {
+func (handler *TestHandler2) ExecuteResume(data map[string]interface{}, transitionHistory []TransitionHistory) (ResumeEvent, map[string]interface{}, error) {
 	// Implement backward action logic here.
-	return OnFailed, data, nil
+	return ResumeSuccess, data, nil
 }
 
 func TestEvent_String(t *testing.T) {

@@ -5,11 +5,18 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Launch Package",
+            "name": "Forward Example",
             "type": "go",
             "request": "launch",
             "mode": "auto",
-            "program": "${workspaceFolder}/examples/example.go",
+            "program": "${workspaceFolder}/forward/forward_example.go",
+        },
+        {
+            "name": "Backward Example",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/backward/backward_example.go",
         }
     ]
 }

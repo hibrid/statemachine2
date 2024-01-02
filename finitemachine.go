@@ -55,11 +55,12 @@ func DetermineTerminalStateEvent(smCtx *Context) (executionEvent Event) {
 }
 
 // DetermineExecutionAction determines the execution action based on the input state.
-func DetermineExecutionAction(inputArbitraryData map[string]interface{}, smCtx *Context) (executionEvent Event, err error) {
+func DetermineExecutionAction(inputArbitraryData map[string]interface{}, smCtx *Context) (convertedEvent Event, err error) {
 	if IsTerminalState(smCtx.InputState) {
 		return DetermineTerminalStateEvent(smCtx), nil
 	}
 	var outputData map[string]interface{}
+	var executionEvent interface{}
 	switch smCtx.InputState {
 	case StateParked:
 		// If parked, try to restart execution based on previous state
@@ -68,21 +69,76 @@ func DetermineExecutionAction(inputArbitraryData map[string]interface{}, smCtx *
 
 	case StatePending, StateOpen:
 		executionEvent, outputData, err = smCtx.Handler.ExecuteForward(inputArbitraryData, smCtx.TransitionHistory)
-
+		// assert that executionevent is a forwardEven
+		if forwardEvent, ok := executionEvent.(ForwardEvent); ok {
+			// forwardEvent is now the concrete type
+			// Convert it to a generic event
+			convertedEvent = forwardEvent.ToEvent()
+		} else {
+			// Handle the error or unexpected type
+			return OnError, errors.New("unexpected event type")
+		}
 	case StatePaused:
 		executionEvent, outputData, err = smCtx.Handler.ExecutePause(inputArbitraryData, smCtx.TransitionHistory)
-
+		// assert that executionevent is a PauseEvent
+		if pauseEvent, ok := executionEvent.(PauseEvent); ok {
+			// pauseEvent is now the concrete type
+			// Convert it to a generic event
+			convertedEvent = pauseEvent.ToEvent()
+		} else {
+			// Handle the error or unexpected type
+			return OnError, errors.New("unexpected event type")
+		}
 	case StateRollback:
 		executionEvent, outputData, err = smCtx.Handler.ExecuteBackward(inputArbitraryData, smCtx.TransitionHistory)
-
+		// assert that executionevent is a BackwardEvent
+		if backwardEvent, ok := executionEvent.(BackwardEvent); ok {
+			// backwardEvent is now the concrete type
+			// Convert it to a generic event
+			convertedEvent = backwardEvent.ToEvent()
+		} else {
+			// Handle the error or unexpected type
+			return OnError, errors.New("unexpected event type")
+		}
 	case StateResume:
 		executionEvent, outputData, err = smCtx.Handler.ExecuteResume(inputArbitraryData, smCtx.TransitionHistory)
+		// assert that executionevent is a ResumeEvent
+		if resumeEvent, ok := executionEvent.(ResumeEvent); ok {
+			// resumeEvent is now the concrete type
+			// Convert it to a generic event
+			convertedEvent = resumeEvent.ToEvent()
+		} else {
+			// Handle the error or unexpected type
+			return OnError, errors.New("unexpected event type")
+		}
 
 	default: // not sure what happened so let's park it
-		executionEvent = OnParked
+		convertedEvent = OnParked
 	}
 	smCtx.OutputArbitraryData = outputData
-	return executionEvent, err
+	return convertedEvent, err
+}
+
+func restartExecutionFromState(state State, smCtx *Context) (Event, error) {
+	switch state {
+	case StatePending, StateOpen:
+		executionEvent, _, err := smCtx.Handler.ExecuteForward(smCtx.InputArbitraryData, smCtx.TransitionHistory)
+		return executionEvent.ToEvent(), err
+	case StatePaused:
+		executionEvent, _, err := smCtx.Handler.ExecutePause(smCtx.InputArbitraryData, smCtx.TransitionHistory)
+		return executionEvent.ToEvent(), err
+	case StateRollback:
+		executionEvent, _, err := smCtx.Handler.ExecuteBackward(smCtx.InputArbitraryData, smCtx.TransitionHistory)
+		return executionEvent.ToEvent(), err
+	case StateResume:
+		executionEvent, _, err := smCtx.Handler.ExecuteResume(smCtx.InputArbitraryData, smCtx.TransitionHistory)
+		return executionEvent.ToEvent(), err
+	default:
+		if IsTerminalState(state) {
+			return DetermineTerminalStateEvent(smCtx), errors.New("cannot restart execution from terminal state")
+		}
+		return OnFailed, nil
+	}
 }
 
 func getLastNonParkedState(history []TransitionHistory) State {
@@ -92,28 +148,6 @@ func getLastNonParkedState(history []TransitionHistory) State {
 		}
 	}
 	return StateUnknown // Or some default state
-}
-
-func restartExecutionFromState(state State, smCtx *Context) (Event, error) {
-	switch state {
-	case StatePending, StateOpen:
-		executionEvent, _, err := smCtx.Handler.ExecuteForward(smCtx.InputArbitraryData, smCtx.TransitionHistory)
-		return executionEvent, err
-	case StatePaused:
-		executionEvent, _, err := smCtx.Handler.ExecutePause(smCtx.InputArbitraryData, smCtx.TransitionHistory)
-		return executionEvent, err
-	case StateRollback:
-		executionEvent, _, err := smCtx.Handler.ExecuteBackward(smCtx.InputArbitraryData, smCtx.TransitionHistory)
-		return executionEvent, err
-	case StateResume:
-		executionEvent, _, err := smCtx.Handler.ExecuteResume(smCtx.InputArbitraryData, smCtx.TransitionHistory)
-		return executionEvent, err
-	default:
-		if IsTerminalState(state) {
-			return DetermineTerminalStateEvent(smCtx), errors.New("cannot restart execution from terminal state")
-		}
-		return OnFailed, nil
-	}
 }
 
 func (smCtx *Context) Handle() (executionEvent Event, err error) {
