@@ -62,6 +62,9 @@ func DetermineExecutionAction(inputArbitraryData map[string]interface{}, smCtx *
 	var outputData map[string]interface{}
 	var executionEvent interface{}
 	switch smCtx.InputState {
+	case StateRetry:
+		lastState := getLastNonRetryState(smCtx.TransitionHistory)
+		return restartExecutionFromState(lastState, smCtx)
 	case StateParked:
 		// If parked, try to restart execution based on previous state
 		lastState := getLastNonParkedState(smCtx.TransitionHistory)
@@ -144,6 +147,15 @@ func restartExecutionFromState(state State, smCtx *Context) (Event, error) {
 func getLastNonParkedState(history []TransitionHistory) State {
 	for i := len(history) - 1; i >= 0; i-- {
 		if history[i].ModifiedState != StateParked {
+			return history[i].ModifiedState
+		}
+	}
+	return StateUnknown // Or some default state
+}
+
+func getLastNonRetryState(history []TransitionHistory) State {
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].ModifiedState != StateRetry {
 			return history[i].ModifiedState
 		}
 	}

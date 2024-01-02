@@ -369,9 +369,12 @@ const (
 	// StateRetry is the state of a state machine when it needs to retry later.
 	StateRetry State = "retry"
 
-	// StateStartRetry is the state of a state machine when it needs to retry later.
+	// StateRetryStart is the state of a state machine when it needs to retry later.
 	// ExecuteForward and change state in machine to StateRetry
-	StateStartRetry State = "start_retry"
+	StateRetryStart State = "start_retry"
+
+	// StateRetryFailed is the state of a state machine when its retry fails.
+	StateRetryFailed State = "retry_failed"
 
 	// StateFailed is the state of a state machine when it fails.
 	// ExecuteBackward
@@ -537,7 +540,7 @@ var ValidTransitions = map[State]map[Event][]State{
 		OnFailed:    []State{StateFailed},
 		OnPause:     []State{StatePaused},
 		OnRollback:  []State{StateStartRollback},
-		OnRetry:     []State{StateRetry, StateStartRetry},
+		OnRetry:     []State{StateRetry, StateRetryStart},
 		OnLock:      []State{StateInProgress},
 		OnCancelled: []State{StateCancelled},
 
@@ -678,7 +681,9 @@ func (sm *StateMachine) handleTransition(context *Context, event Event) error {
 	}
 
 	if err := sm.handleRetryLogic(shouldRetry); err != nil {
-		return err
+		if err := sm.updateStateMachineState(context, StateFailed, event); err != nil {
+			return err
+		}
 	}
 
 	if err := sm.handleSynchoronousExecution(context); err != nil {
@@ -716,6 +721,9 @@ func (sm *StateMachine) handleRetryLogic(shouldRetry bool) error {
 		return nil
 	}
 	remainingDelay := sm.GetRemainingDelay()
+	if remainingDelay < 0 {
+		return fmt.Errorf("max timeout reached")
+	}
 	if remainingDelay > 0 {
 		time.Sleep(remainingDelay)
 	}
@@ -757,8 +765,11 @@ func (sm *StateMachine) updateStateMachineState(context *Context, newState State
 	case StateRollback:
 		sm.ResumeFromStep = stepNumber - 1
 		// we're moving backward direction and the FromStep is the current step
-	case StateStartRetry:
+	case StateRetryStart:
 		newState = StateRetry
+	case StateRetryFailed:
+		newState = StateFailed
+		fallthrough
 	case StateRetry:
 		sm.RetryCount++
 		lastRetry := time.Now()
@@ -821,6 +832,9 @@ func (sm *StateMachine) determineNewState(context *Context, event Event) (State,
 		newState = StateOpen
 	case OnRetry:
 		newState = StateRetry
+		if sm.CurrentState != StateRetry {
+			newState = StateRetryStart
+		}
 		shouldRetry = true
 	case OnCancelled:
 		newState = StateCancelled
@@ -984,12 +998,9 @@ func IsValidTransition(currentState State, event Event, newState State) bool {
 // TODO: create unit tests for this
 func (sm *StateMachine) CalculateNextRetryDelay() time.Duration {
 	baseDelay := sm.BaseDelay // Starting delay of 1 second
-	maxDelay := sm.MaxTimeout // Maximum delay of 60 seconds
-
-	delay := time.Duration(math.Pow(2, float64(sm.RetryCount))) * baseDelay
-	if delay > maxDelay {
-		delay = maxDelay
-	}
+	retryCount := sm.RetryCount
+	retryCount = retryCount + 1 //for the purposes of calculating the delay, we want to start at 1 but want our retry count to be accurate in the state
+	delay := time.Duration(math.Pow(2, float64(retryCount))) * baseDelay
 
 	return delay
 }
@@ -1011,10 +1022,15 @@ func (sm *StateMachine) Run() error {
 
 // TODO: create unit tests for this
 func (sm *StateMachine) GetRemainingDelay() time.Duration {
-	if sm.LastRetry == nil {
-		return 0
+	lastRetry := time.Now()
+	if sm.LastRetry != nil {
+		lastRetry = *sm.LastRetry
 	}
-	nextRetryTime := sm.LastRetry.Add(sm.CalculateNextRetryDelay())
+	delay := sm.CalculateNextRetryDelay()
+	if delay > sm.MaxTimeout {
+		return -1
+	}
+	nextRetryTime := lastRetry.Add(delay)
 	remainingDelay := time.Until(nextRetryTime)
 
 	if remainingDelay < 0 {
@@ -1065,6 +1081,9 @@ func NewStateMachine(config StateMachineConfig) (*StateMachine, error) {
 		CurrentState:         StatePending,
 		SaveAfterEachStep:    config.SaveAfterEachStep,
 		LockType:             config.LockType,
+		RetryType:            config.RetryPolicy.RetryType,
+		MaxTimeout:           config.RetryPolicy.MaxTimeout,
+		BaseDelay:            config.RetryPolicy.BaseDelay,
 	}
 
 	if len(config.Handlers) > 0 {
