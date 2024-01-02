@@ -19,11 +19,18 @@
             "program": "${workspaceFolder}/examples/backward/backward_example.go",
         },
         {
-            "name": "Retry Example",
+            "name": "Forward Retry Example",
             "type": "go",
             "request": "launch",
             "mode": "auto",
-            "program": "${workspaceFolder}/examples/retry/retry_example.go",
+            "program": "${workspaceFolder}/examples/forward/retry/retry_example.go",
+        },
+        {
+            "name": "Backward Retry Example",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/examples/backward/retry/retry_example.go",
         }
     ]
 }

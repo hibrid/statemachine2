@@ -27,17 +27,14 @@ func (handler *TestHandler) ExecuteForward(data map[string]interface{}, transiti
 }
 
 func (handler *TestHandler) ExecuteBackward(data map[string]interface{}, transitionHistory []TransitionHistory) (BackwardEvent, map[string]interface{}, error) {
-	// Implement backward action logic here.
 	return BackwardSuccess, data, nil
 }
 
 func (handler *TestHandler) ExecutePause(data map[string]interface{}, transitionHistory []TransitionHistory) (PauseEvent, map[string]interface{}, error) {
-	// Implement backward action logic here.
 	return PauseSuccess, data, nil
 }
 
 func (handler *TestHandler) ExecuteResume(data map[string]interface{}, transitionHistory []TransitionHistory) (ResumeEvent, map[string]interface{}, error) {
-	// Implement backward action logic here.
 	return ResumeSuccess, data, nil
 }
 
@@ -58,17 +55,14 @@ func (handler *TestHandler2) ExecuteForward(data map[string]interface{}, transit
 }
 
 func (handler *TestHandler2) ExecuteBackward(data map[string]interface{}, transitionHistory []TransitionHistory) (BackwardEvent, map[string]interface{}, error) {
-	// Implement backward action logic here.
 	return BackwardSuccess, data, nil
 }
 
 func (handler *TestHandler2) ExecutePause(data map[string]interface{}, transitionHistory []TransitionHistory) (PauseEvent, map[string]interface{}, error) {
-	// Implement backward action logic here.
 	return PauseSuccess, data, nil
 }
 
 func (handler *TestHandler2) ExecuteResume(data map[string]interface{}, transitionHistory []TransitionHistory) (ResumeEvent, map[string]interface{}, error) {
-	// Implement backward action logic here.
 	return ResumeSuccess, data, nil
 }
 
@@ -89,28 +83,25 @@ func (handler *BackwardTestHandler) ExecuteForward(data map[string]interface{}, 
 }
 
 func (handler *BackwardTestHandler) ExecuteBackward(data map[string]interface{}, transitionHistory []TransitionHistory) (BackwardEvent, map[string]interface{}, error) {
-	// Implement backward action logic here.
 	return BackwardSuccess, data, nil
 }
 
 func (handler *BackwardTestHandler) ExecutePause(data map[string]interface{}, transitionHistory []TransitionHistory) (PauseEvent, map[string]interface{}, error) {
-	// Implement backward action logic here.
 	return PauseSuccess, data, nil
 }
 
 func (handler *BackwardTestHandler) ExecuteResume(data map[string]interface{}, transitionHistory []TransitionHistory) (ResumeEvent, map[string]interface{}, error) {
-	// Implement backward action logic here.
 	return ResumeSuccess, data, nil
 }
 
-type RetryTestHandler struct {
+type ForwardRetryTestHandler struct {
 }
 
-func (handler *RetryTestHandler) Name() string {
-	return "BackwardTestHandler" // Provide a default name for the handler
+func (handler *ForwardRetryTestHandler) Name() string {
+	return "ForwardRetryTestHandler" // Provide a default name for the handler
 }
 
-func (handler *RetryTestHandler) ExecuteForward(data map[string]interface{}, transitionHistory []TransitionHistory) (ForwardEvent, map[string]interface{}, error) {
+func (handler *ForwardRetryTestHandler) ExecuteForward(data map[string]interface{}, transitionHistory []TransitionHistory) (ForwardEvent, map[string]interface{}, error) {
 	// Access and modify arbitrary data in the handler logic
 	data["key1"] = "some bad state and we need to rollback"
 	data["key3"] = "changing to some magic value"
@@ -119,18 +110,42 @@ func (handler *RetryTestHandler) ExecuteForward(data map[string]interface{}, tra
 	return ForwardRetry, data, nil
 }
 
-func (handler *RetryTestHandler) ExecuteBackward(data map[string]interface{}, transitionHistory []TransitionHistory) (BackwardEvent, map[string]interface{}, error) {
-	// Implement backward action logic here.
+func (handler *ForwardRetryTestHandler) ExecuteBackward(data map[string]interface{}, transitionHistory []TransitionHistory) (BackwardEvent, map[string]interface{}, error) {
 	return BackwardSuccess, data, nil
 }
 
-func (handler *RetryTestHandler) ExecutePause(data map[string]interface{}, transitionHistory []TransitionHistory) (PauseEvent, map[string]interface{}, error) {
-	// Implement backward action logic here.
+func (handler *ForwardRetryTestHandler) ExecutePause(data map[string]interface{}, transitionHistory []TransitionHistory) (PauseEvent, map[string]interface{}, error) {
 	return PauseSuccess, data, nil
 }
 
-func (handler *RetryTestHandler) ExecuteResume(data map[string]interface{}, transitionHistory []TransitionHistory) (ResumeEvent, map[string]interface{}, error) {
-	// Implement backward action logic here.
+func (handler *ForwardRetryTestHandler) ExecuteResume(data map[string]interface{}, transitionHistory []TransitionHistory) (ResumeEvent, map[string]interface{}, error) {
+	return ResumeSuccess, data, nil
+}
+
+type BackwardRetryTestHandler struct {
+}
+
+func (handler *BackwardRetryTestHandler) Name() string {
+	return "BackwardRetryTestHandler" // Provide a default name for the handler
+}
+
+func (handler *BackwardRetryTestHandler) ExecuteForward(data map[string]interface{}, transitionHistory []TransitionHistory) (ForwardEvent, map[string]interface{}, error) {
+	// Access and modify arbitrary data in the handler logic
+	data["key1"] = "some bad state and we need to rollback"
+	data["key3"] = "changing to some magic value"
+
+	return ForwardRollback, data, nil
+}
+
+func (handler *BackwardRetryTestHandler) ExecuteBackward(data map[string]interface{}, transitionHistory []TransitionHistory) (BackwardEvent, map[string]interface{}, error) {
+	return BackwardRetry, data, nil
+}
+
+func (handler *BackwardRetryTestHandler) ExecutePause(data map[string]interface{}, transitionHistory []TransitionHistory) (PauseEvent, map[string]interface{}, error) {
+	return PauseSuccess, data, nil
+}
+
+func (handler *BackwardRetryTestHandler) ExecuteResume(data map[string]interface{}, transitionHistory []TransitionHistory) (ResumeEvent, map[string]interface{}, error) {
 	return ResumeSuccess, data, nil
 }
 
@@ -903,7 +918,7 @@ func TestStateMachine_Backward_Run_Integration(t *testing.T) {
 
 }
 
-func TestStateMachine_Retry_Run_Integration(t *testing.T) {
+func TestStateMachine_Forward_Retry_Run_Integration(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("an error '%s' was not expected when opening a stub database connection", err)
@@ -916,7 +931,7 @@ func TestStateMachine_Retry_Run_Integration(t *testing.T) {
 		UniqueStateMachineID: "test1",
 		LookupKey:            "5",
 		DB:                   db,
-		Handlers:             []Handler{&TestHandler{}, &RetryTestHandler{}},
+		Handlers:             []Handler{&TestHandler{}, &ForwardRetryTestHandler{}},
 		ExecuteSynchronously: true,
 		RetryPolicy: RetryPolicy{
 			MaxTimeout: 10 * time.Second,
@@ -1028,6 +1043,183 @@ func TestStateMachine_Retry_Run_Integration(t *testing.T) {
 	mock.ExpectRollback()
 
 	// Update to record the completion of the state machine
+	mock.ExpectBegin()
+	mock.ExpectExec(escapeRegexChars(updateStateMachineStateSQL(config.Name))).WithArgs(StateRetry, sqlmock.AnyArg(), 1, sqlmock.AnyArg(), config.UniqueStateMachineID).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	// Update to record the completion of the state machine
+	mock.ExpectBegin()
+	mock.ExpectExec(escapeRegexChars(updateStateMachineStateSQL(config.Name))).WithArgs(StateFailed, sqlmock.AnyArg(), 1, sqlmock.AnyArg(), config.UniqueStateMachineID).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	sm, err := NewStateMachine(config)
+	if err != nil {
+		t.Fatalf("error creating StateMachine: %v", err)
+	}
+
+	// Execute the Run method
+	err = sm.Run()
+	if err != nil {
+		t.Errorf("Run() resulted in an error: %v", err)
+	}
+
+	// Assert that all expectations were met
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("there were unfulfilled expectations: %s", err)
+	}
+
+	if sm.CurrentState != StateFailed {
+		t.Errorf("Run() did not result in a completed state machine")
+	}
+
+	if sm.LastRetry == nil {
+		t.Errorf("Run() should have set LastRetry")
+	}
+
+	if sm.ResumeFromStep != 1 {
+		t.Errorf("Run() should have set ResumeFromStep to 1")
+	}
+
+}
+
+func TestStateMachine_Backward_Retry_Run_Integration(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("an error '%s' was not expected when opening a stub database connection", err)
+	}
+	defer db.Close()
+
+	// Initialize StateMachine with necessary configuration
+	config := StateMachineConfig{
+		Name:                 "testing",
+		UniqueStateMachineID: "test1",
+		LookupKey:            "5",
+		DB:                   db,
+		Handlers:             []Handler{&TestHandler{}, &BackwardRetryTestHandler{}},
+		ExecuteSynchronously: true,
+		RetryPolicy: RetryPolicy{
+			MaxTimeout: 10 * time.Second,
+			BaseDelay:  1 * time.Second,
+			RetryType:  ExponentialBackoff,
+		},
+		SaveAfterEachStep: true,
+		LockType:          LocalLock,
+	}
+
+	// Set up expectations for CreateGlobalLockTableIfNotExists
+	createTableSQL := escapeRegexChars(`CREATE TABLE IF NOT EXISTS GLOBAL_LOCK (
+        ID INT NOT NULL AUTO_INCREMENT,
+        StateMachineType VARCHAR(255),
+        StateMachineID VARCHAR(255),
+        LookupKey VARCHAR(255),
+        LockTimestamp TIMESTAMP,
+        UnlockTimestamp TIMESTAMP NULL,
+        PRIMARY KEY (ID),
+        INDEX (StateMachineType),
+        INDEX (LookupKey),
+        INDEX (UnlockTimestamp)
+    );`)
+	mock.ExpectExec(createTableSQL).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	mock.ExpectExec(escapeRegexChars(createStateMachineTableIfNotExistsSQL(config.Name))).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	var usesGlobalLock, usesLocalLock bool
+	if config.LockType == GlobalLock {
+		usesGlobalLock = true
+	}
+	if config.LockType == LocalLock {
+		usesLocalLock = true
+	}
+
+	mock.ExpectExec(escapeRegexChars(insertStateMachineSQL(config.Name))).WithArgs(
+		config.UniqueStateMachineID,
+		StatePending,
+		config.LookupKey,
+		0,
+		config.SaveAfterEachStep,
+		config.KafkaEventTopic,
+		sqlmock.AnyArg(),
+		sqlmock.AnyArg(),
+		sqlmock.AnyArg(),
+		nil,
+		nil,
+		usesGlobalLock,
+		usesLocalLock).WillReturnResult(sqlmock.NewResult(1, 1))
+
+	// Obtain the local lock with a global lock
+	mock.ExpectBegin()
+	mock.ExpectQuery(escapeRegexChars(checkGlobalLockExistsSQL())).WithArgs(config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
+	mock.ExpectQuery(escapeRegexChars(isGlobalLockOwnedByThisInstanceSQL())).WithArgs(config.Name, config.UniqueStateMachineID, config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
+	mock.ExpectQuery(escapeRegexChars(checkLocalLockExistsSQL(config.Name))).WithArgs(config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
+	mock.ExpectQuery(escapeRegexChars(isLocalLockOwnedByThisInstanceSQL(config.Name))).WithArgs(config.UniqueStateMachineID, config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
+
+	mock.ExpectRollback()
+
+	// Update after Handler 1
+	mock.ExpectBegin()
+	mock.ExpectExec(escapeRegexChars(updateStateMachineStateSQL(config.Name))).WithArgs(StateOpen, sqlmock.AnyArg(), 1, sqlmock.AnyArg(), config.UniqueStateMachineID).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	// Obtain the local lock without a global lock
+	mock.ExpectBegin()
+	mock.ExpectQuery(escapeRegexChars(checkGlobalLockExistsSQL())).WithArgs(config.LookupKey).WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(escapeRegexChars(checkLocalLockExistsSQL(config.Name))).WithArgs(config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
+	mock.ExpectQuery(escapeRegexChars(isLocalLockOwnedByThisInstanceSQL(config.Name))).WithArgs(config.UniqueStateMachineID, config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
+	mock.ExpectRollback()
+
+	// Update after Handler 2 executes and starts to rollback
+	mock.ExpectBegin()
+	mock.ExpectExec(escapeRegexChars(updateStateMachineStateSQL(config.Name))).WithArgs(StateRollback, sqlmock.AnyArg(), 1, sqlmock.AnyArg(), config.UniqueStateMachineID).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	// Obtain the local lock without a global lock
+	mock.ExpectBegin()
+	mock.ExpectQuery(escapeRegexChars(checkGlobalLockExistsSQL())).WithArgs(config.LookupKey).WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(escapeRegexChars(checkLocalLockExistsSQL(config.Name))).WithArgs(config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
+	mock.ExpectQuery(escapeRegexChars(isLocalLockOwnedByThisInstanceSQL(config.Name))).WithArgs(config.UniqueStateMachineID, config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
+
+	mock.ExpectRollback()
+
+	// Update after Handler 2 is executing the same step and has entered retry state
+	mock.ExpectBegin()
+	mock.ExpectExec(escapeRegexChars(updateStateMachineStateSQL(config.Name))).WithArgs(StateRetry, sqlmock.AnyArg(), 1, sqlmock.AnyArg(), config.UniqueStateMachineID).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	// Obtain the local lock without a global lock
+	mock.ExpectBegin()
+	mock.ExpectQuery(escapeRegexChars(checkGlobalLockExistsSQL())).WithArgs(config.LookupKey).WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(escapeRegexChars(checkLocalLockExistsSQL(config.Name))).WithArgs(config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
+	mock.ExpectQuery(escapeRegexChars(isLocalLockOwnedByThisInstanceSQL(config.Name))).WithArgs(config.UniqueStateMachineID, config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
+
+	mock.ExpectRollback()
+
+	// Update after Handler 2 executes again with a retry
+	mock.ExpectBegin()
+	mock.ExpectExec(escapeRegexChars(updateStateMachineStateSQL(config.Name))).WithArgs(StateRetry, sqlmock.AnyArg(), 1, sqlmock.AnyArg(), config.UniqueStateMachineID).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	// Obtain the local lock without a global lock
+	mock.ExpectBegin()
+	mock.ExpectQuery(escapeRegexChars(checkGlobalLockExistsSQL())).WithArgs(config.LookupKey).WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(escapeRegexChars(checkLocalLockExistsSQL(config.Name))).WithArgs(config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
+	mock.ExpectQuery(escapeRegexChars(isLocalLockOwnedByThisInstanceSQL(config.Name))).WithArgs(config.UniqueStateMachineID, config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
+
+	mock.ExpectRollback()
+
+	// Update to record the another retry
+	mock.ExpectBegin()
+	mock.ExpectExec(escapeRegexChars(updateStateMachineStateSQL(config.Name))).WithArgs(StateRetry, sqlmock.AnyArg(), 1, sqlmock.AnyArg(), config.UniqueStateMachineID).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	// Obtain the local lock without a global lock
+	mock.ExpectBegin()
+	mock.ExpectQuery(escapeRegexChars(checkGlobalLockExistsSQL())).WithArgs(config.LookupKey).WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(escapeRegexChars(checkLocalLockExistsSQL(config.Name))).WithArgs(config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
+	mock.ExpectQuery(escapeRegexChars(isLocalLockOwnedByThisInstanceSQL(config.Name))).WithArgs(config.UniqueStateMachineID, config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
+
+	mock.ExpectRollback()
+
+	// Update to record the another retry
 	mock.ExpectBegin()
 	mock.ExpectExec(escapeRegexChars(updateStateMachineStateSQL(config.Name))).WithArgs(StateRetry, sqlmock.AnyArg(), 1, sqlmock.AnyArg(), config.UniqueStateMachineID).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()

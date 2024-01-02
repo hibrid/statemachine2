@@ -89,6 +89,7 @@ const (
 	BackwardFail
 	BackwardRollback
 	BackwardCancel
+	BackwardRetry
 	BackwardUnknown
 )
 
@@ -104,6 +105,8 @@ func (e BackwardEvent) String() string {
 		return "BackwardRollback"
 	case BackwardCancel:
 		return "BackwardCancel"
+	case BackwardRetry:
+		return "BackwardRetry"
 	default:
 		return fmt.Sprintf("UnknownBackwardEvent(%d)", e)
 	}
@@ -122,6 +125,8 @@ func (e BackwardEvent) ToEvent() Event {
 		return OnRollback
 	case BackwardCancel:
 		return OnCancelled
+	case BackwardRetry:
+		return OnRetry
 	default:
 		return OnUnknownSituation
 	}
@@ -558,6 +563,7 @@ var ValidTransitions = map[State]map[Event][]State{
 	},
 	StateRollback: {
 		OnSuccess:           []State{StateOpen},
+		OnRetry:             []State{StateRetry, StateRetryStart},
 		OnRollbackCompleted: []State{StateRollbackCompleted},
 		OnRollbackFailed:    []State{StateRollbackFailed},
 		OnRollback:          []State{StateRollback},
