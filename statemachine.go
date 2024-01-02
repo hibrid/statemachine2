@@ -10,6 +10,7 @@ import (
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/go-sql-driver/mysql"
+	"github.com/google/uuid"
 )
 
 type Callback func(*StateMachine, *Context) error
@@ -118,12 +119,19 @@ const (
 	StateFailed State = "failed"
 
 	// StateRetry is the state of a state machine when it needs to retry later.
-
 	StateRetry State = "retry"
+
+	// StateStartRetry is the state of a state machine when it needs to retry later.
+	// ExecuteForward and change state in machine to StateRetry
+	StateStartRetry State = "start_retry"
 
 	// StateFailed is the state of a state machine when it fails.
 	// ExecuteBackward
 	StateRollback State = "rollback"
+
+	// We are going to start the rollback process
+	// ExecuteBackward and change state in machine to StateRollback
+	StateStartRollback State = "start_rollback"
 
 	// StateRollbackFailed is the state of a state machine when its rollback fails.
 	// AlreadyRollbackFailed - No action
@@ -278,7 +286,7 @@ var ValidTransitions = map[State]map[Event][]State{
 		OnFailed:    []State{StateFailed},
 		OnPause:     []State{StatePaused},
 		OnRollback:  []State{StateRollback},
-		OnRetry:     []State{StateRetry},
+		OnRetry:     []State{StateRetry, StateStartRetry},
 
 		OnUnknownSituation: []State{StateParked},
 	},
@@ -301,26 +309,6 @@ var ValidTransitions = map[State]map[Event][]State{
 	},
 
 	// Add other states and their corresponding events here
-}
-
-// IsValidTransition checks if a transition from one state to another is valid.
-func IsValidTransition(currentState State, event Event, newState State) bool {
-	validTransitions, ok := ValidTransitions[currentState]
-	if !ok {
-		return false
-	}
-
-	validNextStates, ok := validTransitions[event]
-	if !ok {
-		return false
-	}
-
-	for _, state := range validNextStates {
-		if state == newState || state == AnyState {
-			return true
-		}
-	}
-	return false
 }
 
 func deserializeFromJSON(data []byte) (map[string]interface{}, error) {
@@ -348,28 +336,7 @@ func (sm *StateMachine) saveStateToDB() error {
 	return nil
 }
 
-func (sm *StateMachine) CalculateNextRetryDelay() time.Duration {
-	baseDelay := sm.BaseDelay // Starting delay of 1 second
-	maxDelay := sm.MaxTimeout // Maximum delay of 60 seconds
-
-	delay := time.Duration(math.Pow(2, float64(sm.RetryCount))) * baseDelay
-	if delay > maxDelay {
-		delay = maxDelay
-	}
-
-	return delay
-}
-
-func (sm *StateMachine) GetRemainingDelay() time.Duration {
-	nextRetryTime := sm.LastRetry.Add(sm.CalculateNextRetryDelay())
-	remainingDelay := time.Until(nextRetryTime)
-
-	if remainingDelay < 0 {
-		return 0
-	}
-	return remainingDelay
-}
-
+// TODO: create unit tests for this
 // Load the serialized JSON state data from the database
 func loadStateMachineFromDB(stateMachineType string, id string, db *sql.DB) (*StateMachine, error) {
 	// Load serialized state data from the database (replace with your database logic)
@@ -385,20 +352,7 @@ func loadStateMachineFromDB(stateMachineType string, id string, db *sql.DB) (*St
 	return sm, nil
 }
 
-// Run executes the state machine.
-func (sm *StateMachine) Run() error {
-	if err := sm.checkAndAcquireLocks(); err != nil {
-		return err
-	}
-
-	context := sm.createContext()
-	if err := sm.validateHandlers(); err != nil {
-		return err
-	}
-
-	return sm.processStateMachine(context)
-}
-
+// TODO: create unit tests for this
 // processStateMachine processes the state machine based on the current context.
 func (sm *StateMachine) processStateMachine(context *Context) error {
 	// Check that CurrentArbitraryData is not nil
@@ -445,10 +399,9 @@ func (sm *StateMachine) validateHandlers() error {
 	return nil
 }
 
-func (sm *StateMachine) HandleEvent(context *Context, event Event) error {
-	return sm.handleTransition(context, event)
-}
-
+/*
+// TODO: create unit tests for this
+// TODO: refactor this to be more readable
 func (sm *StateMachine) handleTransition(context *Context, event Event) error {
 
 	// Leave state callback (before changing the state)
@@ -499,6 +452,7 @@ func (sm *StateMachine) handleTransition(context *Context, event Event) error {
 	case OnRollback:
 		newState = StateRollback
 		if sm.CurrentState == StateRollback {
+			newState = StateStartRollback
 			// move the resume step back by 1 since we were already on rollback state
 			// and not just entering the rollback state
 			// if we were, we would have set the resume step to the current step
@@ -576,7 +530,194 @@ func (sm *StateMachine) handleTransition(context *Context, event Event) error {
 
 	return nil
 }
+*/
 
+func (sm *StateMachine) handleTransition(context *Context, event Event) error {
+	if err := sm.executeLeaveStateCallback(context); err != nil {
+		return err
+	}
+
+	newState, shouldRetry, err := sm.determineNewState(context, event)
+	if err != nil {
+		return err
+	}
+
+	if err := sm.updateStateMachineState(context, newState, event); err != nil {
+		return err
+	}
+
+	if err := sm.executeEnterStateCallback(context); err != nil {
+		return err
+	}
+
+	if err := sm.handleRetryLogic(shouldRetry); err != nil {
+		return err
+	}
+
+	if err := sm.handleSynchoronousExecution(context); err != nil {
+		return err
+	}
+
+	if err := sm.handleAsynchronousExecution(context); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (sm *StateMachine) handleAsynchronousExecution(context *Context) error {
+	if !IsTerminalState(sm.CurrentState) && !sm.ExecuteSynchronously {
+		// Send Kafka event if configured
+		if sm.KafkaEventTopic != "" {
+			if err := sm.sendKafkaEvent(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return nil
+}
+
+func (sm *StateMachine) handleSynchoronousExecution(context *Context) error {
+	if !IsTerminalState(sm.CurrentState) && sm.ExecuteSynchronously {
+		return sm.Run()
+	}
+	return nil
+}
+
+func (sm *StateMachine) handleRetryLogic(shouldRetry bool) error {
+	if !shouldRetry {
+		return nil
+	}
+	remainingDelay := sm.GetRemainingDelay()
+	if remainingDelay > 0 {
+		time.Sleep(remainingDelay)
+	}
+
+	return nil
+}
+
+func (sm *StateMachine) executeLeaveStateCallback(context *Context) error {
+	if callbacks, ok := sm.Callbacks[string(sm.CurrentState)]; ok {
+		if err := callbacks.LeaveState(sm, context); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (sm *StateMachine) updateStateMachineState(context *Context, newState State, event Event) error {
+
+	stepNumber := context.StepNumber
+	historyEntry := TransitionHistory{
+		FromStep:            stepNumber,
+		ToStep:              stepNumber,
+		HandlerName:         context.Handler.Name(),
+		InitialState:        context.InputState,
+		ModifiedState:       sm.CurrentState,
+		InputArbitraryData:  context.InputArbitraryData,
+		OutputArbitraryData: context.OutputArbitraryData,
+		EventEmitted:        event,
+	}
+
+	switch newState {
+	case StateOpen:
+		historyEntry.FromStep = stepNumber - 1 // the previous step is the current step minus 1
+		sm.ResumeFromStep = stepNumber + 1     // set the resume step to the next step
+	case StateStartRollback:
+		newState = StateRollback
+		// we want to resume from the same step we are on to execute the backward function
+	case StateRollback:
+		sm.ResumeFromStep = stepNumber - 1
+		// we're moving backward direction and the FromStep is the current step
+	case StateStartRetry:
+		newState = StateRetry
+	case StateRetry:
+		sm.RetryCount++
+		lastRetry := time.Now()
+		sm.LastRetry = &lastRetry
+	}
+
+	sm.CurrentState = newState
+	historyEntry.ModifiedState = sm.CurrentState
+	sm.History = append(sm.History, historyEntry)
+
+	if sm.SaveAfterEachStep {
+		if err := sm.saveStateToDB(); err != nil {
+			// Handle state save error.
+			return err
+		}
+	}
+	return nil
+}
+
+func (sm *StateMachine) executeEnterStateCallback(context *Context) error {
+	if callbacks, ok := sm.Callbacks[string(sm.CurrentState)]; ok {
+		if err := callbacks.EnterState(sm, context); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (sm *StateMachine) determineNewState(context *Context, event Event) (State, bool, error) {
+
+	var shouldRetry bool
+	var newState State
+
+	// Handle events and transitions using the handler's Execute methods
+	switch event {
+	case OnCompleted:
+		newState = StateCompleted
+	case OnRollbackCompleted:
+		newState = StateRollbackCompleted
+	case OnFailed:
+		newState = StateFailed
+	case OnSuccess:
+		newState = StateOpen
+		// we're moving forward direction and the FromStep is the previous step for our history entry
+		//historyEntry.FromStep = stepNumber - 1
+		//sm.ResumeFromStep = stepNumber + 1
+	case OnResetTimeout:
+		newState = StateRollback
+	case OnPause:
+		newState = StatePaused
+	case OnAlreadyCompleted:
+		newState = sm.CurrentState
+	case OnRollback:
+		newState = StateRollback
+		if sm.CurrentState != StateRollback {
+			newState = StateStartRollback
+		}
+		//if sm.CurrentState == StateRollback {
+		// move the resume step back by 1 since we were already on rollback state
+		// and not just entering the rollback state
+		// if we were, we would have set the resume step to the current step
+		//sm.ResumeFromStep = stepNumber - 1
+		//}
+	case OnResume:
+		newState = StateOpen
+	case OnRetry:
+		newState = StateRetry
+		/*if newState == sm.CurrentState {
+			sm.RetryCount++
+		}
+		*/
+		//lastRetry := time.Now()
+		//sm.LastRetry = &lastRetry
+		//remainingDelay = sm.GetRemainingDelay()
+		shouldRetry = true
+
+	case OnUnknownSituation:
+		newState = StateParked
+	default:
+		newState = StateParked
+		//TODO: Log Error
+	}
+
+	return newState, shouldRetry, nil
+}
+
+// TODO: create unit tests for this
 // shouldCheckLocks is replaced by checkAndAcquireLocks
 func (sm *StateMachine) checkAndAcquireLocks() error {
 
@@ -679,10 +820,78 @@ func (sm *StateMachine) checkAndObtainLocalLock() error {
 	return nil
 }
 
+// TODO: implement this
 // sendKafkaEvent sends a Kafka event.
 func (sm *StateMachine) sendKafkaEvent() error {
 	// Implement logic to send Kafka event.
 	return nil
+}
+
+// IsValidTransition checks if a transition from one state to another is valid.
+func IsValidTransition(currentState State, event Event, newState State) bool {
+	validTransitions, ok := ValidTransitions[currentState]
+	if !ok {
+		return false
+	}
+
+	validNextStates, ok := validTransitions[event]
+	if !ok {
+		return false
+	}
+
+	for _, state := range validNextStates {
+		if state == newState || state == AnyState {
+			return true
+		}
+	}
+	return false
+}
+
+// TODO: create unit tests for this
+func (sm *StateMachine) CalculateNextRetryDelay() time.Duration {
+	baseDelay := sm.BaseDelay // Starting delay of 1 second
+	maxDelay := sm.MaxTimeout // Maximum delay of 60 seconds
+
+	delay := time.Duration(math.Pow(2, float64(sm.RetryCount))) * baseDelay
+	if delay > maxDelay {
+		delay = maxDelay
+	}
+
+	return delay
+}
+
+// create unit tests for this
+// Run executes the state machine.
+func (sm *StateMachine) Run() error {
+	if err := sm.checkAndAcquireLocks(); err != nil {
+		return err
+	}
+
+	context := sm.createContext()
+	if err := sm.validateHandlers(); err != nil {
+		return err
+	}
+
+	return sm.processStateMachine(context)
+}
+
+// TODO: create unit tests for this
+func (sm *StateMachine) GetRemainingDelay() time.Duration {
+	if sm.LastRetry == nil {
+		return 0
+	}
+	nextRetryTime := sm.LastRetry.Add(sm.CalculateNextRetryDelay())
+	remainingDelay := time.Until(nextRetryTime)
+
+	if remainingDelay < 0 {
+		return 0
+	}
+	return remainingDelay
+}
+
+// TODO: Create Unit tests for this
+func (sm *StateMachine) HandleEvent(context *Context, event Event) error {
+	return sm.handleTransition(context, event)
 }
 
 // NewStateMachine initializes a new StateMachine instance.
@@ -721,6 +930,16 @@ func NewStateMachine(config StateMachineConfig) (*StateMachine, error) {
 		UpdatedTimestamp:     time.Now(),
 		CurrentState:         StatePending,
 		SaveAfterEachStep:    config.SaveAfterEachStep,
+		LockType:             config.LockType,
+	}
+
+	if len(config.Handlers) > 0 {
+		sm.Handlers = config.Handlers
+	}
+
+	// If UniqueID is not provided, generate it.
+	if sm.UniqueID == "" {
+		sm.GenerateAndSetUniqueID()
 	}
 
 	err = insertStateMachine(sm)
@@ -738,23 +957,41 @@ func NewStateMachine(config StateMachineConfig) (*StateMachine, error) {
 	return sm, nil
 }
 
+// TODO: create unit tests for this
+// GenerateAndSetUniqueID generates a unique ID for the StateMachine and updates the UniqueID field.
+func (sm *StateMachine) GenerateAndSetUniqueID() string {
+	// Generate a unique ID (e.g., UUID)
+	uniqueID := uuid.New().String() // Using UUID as an example
+	sm.UniqueID = uniqueID
+	return uniqueID
+}
+
+// TODO: create unit tests for this
+// TODO: create integration tests for this
+// TODO: create unit tests for this
 func (sm *StateMachine) SetUniqueID(uniqueStateMachineID string) *StateMachine {
 	sm.UniqueID = uniqueStateMachineID
 	return sm
 }
 
+// TODO: create unit tests for this
+// TODO: create integration tests for this
 // SetLookupKey sets the lookup key for the state machine. Something like a user or account ID to lock on.
 func (sm *StateMachine) SetLookupKey(lookUpKey string) *StateMachine {
 	sm.LookupKey = lookUpKey
 	return sm
 }
 
+// TODO: create unit tests for this
+// TODO: create integration tests for this
 // SetInitialState sets the force sets the state of the state machine without validation.
 func (sm *StateMachine) SetState(state State) *StateMachine {
 	sm.CurrentState = state
 	return sm
 }
 
+// TODO: create unit tests for this
+// TODO: create integration tests for this
 // UpdateState attempts to update the state of the state machine, returning an error if the transition is invalid.
 func (sm *StateMachine) UpdateState(newState State, event Event) error {
 	if !IsValidTransition(sm.CurrentState, event, newState) {
@@ -764,12 +1001,16 @@ func (sm *StateMachine) UpdateState(newState State, event Event) error {
 	return nil
 }
 
+// TODO: create unit tests for this
+// TODO: create integration tests for this
 // AddHandler adds a handler to the state machine.
 func (sm *StateMachine) AddHandler(handler Handler, name string) *StateMachine {
 	sm.Handlers = append(sm.Handlers, handler)
 	return sm
 }
 
+// TODO: create unit tests for this
+// TODO: create integration tests for this
 // RegisterCallback registers a callback for a statemachine event
 func (sm *StateMachine) RegisterEventCallback(state State, callbacks StateCallbacks) *StateMachine {
 	if sm.Callbacks == nil {
@@ -779,12 +1020,16 @@ func (sm *StateMachine) RegisterEventCallback(state State, callbacks StateCallba
 	return sm
 }
 
+// TODO: create unit tests for this
+// TODO: create integration tests for this
 // SaveState saves the state machine's state to the database.
 func (sm *StateMachine) SaveState() error {
 	// Refactored to use a more descriptive method name
 	return sm.saveStateToDB()
 }
 
+// TODO: create unit tests for this
+// TODO: create integration tests for this
 // LoadStateMachine loads a StateMachine from the database.
 func LoadStateMachine(name, id string, db *sql.DB) (*StateMachine, error) {
 	sm, err := loadStateMachineFromDB(name, id, db)
@@ -807,6 +1052,8 @@ func LoadStateMachine(name, id string, db *sql.DB) (*StateMachine, error) {
 	return sm, nil
 }
 
+// TODO: create unit tests for this
+// TODO: create integration tests for this
 // Rollback rolls back the state machine to the previous state.
 func (sm *StateMachine) Rollback() error {
 	// Check if the transition from the current state with OnRollback event is valid
@@ -817,6 +1064,8 @@ func (sm *StateMachine) Rollback() error {
 	return sm.Run()
 }
 
+// TODO: create unit tests for this
+// TODO: create integration tests for this
 // Resume resumes the execution of the state machine.
 func (sm *StateMachine) Resume() error {
 	// Check if the transition from the current state with OnResume event is valid
@@ -827,6 +1076,8 @@ func (sm *StateMachine) Resume() error {
 	return sm.Run()
 }
 
+// TODO: create unit tests for this
+// TODO: create integration tests for this
 // ExitParkedState exits the parked state into the specified state.
 func (sm *StateMachine) ExitParkedState(newState State) error {
 	// Validate the transition out of StateParked
