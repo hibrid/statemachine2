@@ -488,6 +488,7 @@ func (sm *StateMachine) executeLeaveStateCallback(context *Context) error {
 
 func (sm *StateMachine) updateStateMachineState(context *Context, newState State, event Event) error {
 
+	sm.CurrentArbitraryData = context.OutputArbitraryData
 	stepNumber := context.StepNumber
 	historyEntry := TransitionHistory{
 		FromStep:            stepNumber,
