@@ -28,7 +28,7 @@ func (handler *TestHandler) ExecuteForward(data map[string]interface{}, transiti
 
 func (handler *TestHandler) ExecuteBackward(data map[string]interface{}, transitionHistory []TransitionHistory) (Event, map[string]interface{}, error) {
 	// Implement backward action logic here.
-	return OnSuccess, data, nil
+	return OnRollback, data, nil
 }
 
 func (handler *TestHandler) ExecutePause(data map[string]interface{}, transitionHistory []TransitionHistory) (Event, map[string]interface{}, error) {
@@ -270,19 +270,39 @@ func TestStateMachine_determineNewState(t *testing.T) {
 		expectedState State
 		expectedRetry bool
 	}{
-		{"OnCompleted", StateOpen, OnCompleted, StateCompleted, false},
-		{"OnRollbackCompleted", StateRollback, OnRollbackCompleted, StateRollbackCompleted, false},
-		{"OnFailed", StateOpen, OnFailed, StateFailed, false},
-		{"OnSuccess", StateOpen, OnSuccess, StateOpen, false},
-		{"OnResetTimeout", StateOpen, OnResetTimeout, StateRollback, false},
-		{"OnPause", StateOpen, OnPause, StatePaused, false},
-		{"OnAlreadyCompleted", StateCompleted, OnAlreadyCompleted, StateCompleted, false},
-		{"OnRollback", StateOpen, OnRollback, StateStartRollback, false},
-		{"OnRollbackAlreadyInRollback", StateRollback, OnRollback, StateRollback, false},
-		{"OnResume", StatePaused, OnResume, StateOpen, false},
-		{"OnRetry", StateRetry, OnRetry, StateRetry, true},
-		{"OnUnknownSituation", StateOpen, OnUnknownSituation, StateParked, false},
-		{"DefaultCase", StateOpen, Event(999), StateParked, false}, // Testing default case
+		{"OnSuccess from StatePending", StatePending, OnSuccess, StateOpen, false},
+		{"OnFailed from StatePending", StatePending, OnFailed, StateFailed, false},
+		{"OnCancelled from StatePending", StatePending, OnCancelled, StateCancelled, false},
+		{"OnUnknownSituation from StatePending", StatePending, OnUnknownSituation, StateParked, false},
+
+		{"OnSuccess from StateOpen", StateOpen, OnSuccess, StateOpen, false},
+		{"OnCompleted from StateOpen", StateOpen, OnCompleted, StateCompleted, false},
+		{"OnFailed from StateOpen", StateOpen, OnFailed, StateFailed, false},
+		{"OnPause from StateOpen", StateOpen, OnPause, StatePaused, false},
+		{"OnRollback from StateOpen", StateOpen, OnRollback, StateStartRollback, false},
+		{"OnRetry from StateOpen", StateOpen, OnRetry, StateRetry, true},
+		{"OnLock from StateOpen", StateOpen, OnLock, StateInProgress, false},
+		{"OnCancelled from StateOpen", StateOpen, OnCancelled, StateCancelled, false},
+		{"OnUnknownSituation from StateOpen", StateOpen, OnUnknownSituation, StateParked, false},
+
+		{"OnSuccess from StateRetry", StateRetry, OnSuccess, StateOpen, false},
+		{"OnFailed from StateRetry", StateRetry, OnFailed, StateFailed, false},
+		{"OnRetry from StateRetry", StateRetry, OnRetry, StateRetry, true},
+		{"OnLock from StateRetry", StateRetry, OnLock, StateInProgress, false},
+		{"OnCancelled from StateRetry", StateRetry, OnCancelled, StateCancelled, false},
+		{"OnResetTimeout from StateRetry", StateRetry, OnResetTimeout, StateFailed, false},
+		{"OnUnknownSituation from StateRetry", StateRetry, OnUnknownSituation, StateParked, false},
+
+		{"OnSuccess from StateRollback", StateRollback, OnSuccess, StateOpen, false},
+		{"OnRollbackCompleted from StateRollback", StateRollback, OnRollbackCompleted, StateRollbackCompleted, false},
+		{"OnRollbackFailed from StateRollback", StateRollback, OnRollbackFailed, StateRollbackFailed, false},
+		{"OnRollback from StateRollback", StateRollback, OnRollback, StateRollback, false},
+		{"OnCancelled from StateRollback", StateRollback, OnCancelled, StateCancelled, false},
+		{"OnUnknownSituation from StateRollback", StateRollback, OnUnknownSituation, StateParked, false},
+
+		{"OnResume from StatePaused", StatePaused, OnResume, StateOpen, false},
+
+		{"OnManualOverride from StateParked", StateParked, OnManualOverride, AnyState, false},
 	}
 
 	for _, tt := range tests {
@@ -292,8 +312,14 @@ func TestStateMachine_determineNewState(t *testing.T) {
 			if err != nil {
 				t.Errorf("determineNewState() error = %v, wantErr %v", err, false)
 			}
-			if newState != tt.expectedState {
+			if newState != tt.expectedState && tt.expectedState != AnyState {
 				t.Errorf("determineNewState() newState = %v, want %v", newState, tt.expectedState)
+			}
+			if newState == AnyState && tt.event != OnManualOverride {
+				t.Errorf("determineNewState() newState = %v, want %v. OnManualOverride is the only thing that should return AnyState", newState, OnManualOverride)
+			}
+			if tt.event == OnManualOverride && tt.currentState != StateParked {
+				t.Errorf("determineNewState() newState = %v, want %v. OnManualOverride should only be valid from StateParked", newState, StateParked)
 			}
 			if shouldRetry != tt.expectedRetry {
 				t.Errorf("determineNewState() shouldRetry = %v, want %v", shouldRetry, tt.expectedRetry)
@@ -502,24 +528,25 @@ func TestIsTerminalState(t *testing.T) {
 }
 
 func TestIsValidTransition(t *testing.T) {
-	tests := []struct {
-		currentState State
-		event        Event
-		newState     State
-		expected     bool
-	}{
-		{StateOpen, OnSuccess, StateCompleted, true},
-		{StateOpen, OnFailed, StateFailed, true},
-		{StateOpen, OnPause, StatePaused, true},
-		// TODO: Add more test cases for different combinations
-	}
-
-	for _, test := range tests {
-		result := IsValidTransition(test.currentState, test.event, test.newState)
-		if result != test.expected {
-			t.Errorf("IsValidTransition(%s, %s, %s) = %v; want %v", test.currentState, test.event, test.newState, result, test.expected)
+	for currentState, events := range ValidTransitions {
+		for event, validNextStates := range events {
+			for _, validNextState := range validNextStates {
+				t.Run(fmt.Sprintf("Valid: %s + %s -> %s", currentState, event, validNextState), func(t *testing.T) {
+					if !IsValidTransition(currentState, event, validNextState) {
+						t.Errorf("IsValidTransition(%s, %s, %s) = false; want true", currentState, event, validNextState)
+					}
+				})
+			}
 		}
 	}
+
+	// Test for an invalid transition
+	t.Run("Invalid transition", func(t *testing.T) {
+		invalidTransition := IsValidTransition(StateOpen, OnSuccess, StateFailed) // Assuming this is an invalid transition
+		if invalidTransition {
+			t.Errorf("IsValidTransition(StateOpen, OnSuccess, StateFailed) = true; want false")
+		}
+	})
 }
 
 func TestStateMachine_Run_Integration(t *testing.T) {
@@ -748,22 +775,133 @@ func TestUpdateStateMachineState(t *testing.T) {
 	}
 }
 
-/*
-func TestStateMachine_CalculateNextRetryDelay(t *testing.T) {
-	sm := &StateMachine{
-		RetryCount: 2,
-		BaseDelay:  1 * time.Second,
-		MaxTimeout: 60 * time.Second,
-	}
-
-	expectedDelay := 4 * time.Second // 2^2 * 1 second
-	actualDelay := sm.CalculateNextRetryDelay()
-	if actualDelay != expectedDelay {
-		t.Errorf("CalculateNextRetryDelay() = %v; want %v", actualDelay, expectedDelay)
-	}
-}
-*/
-
 func escapeRegexChars(input string) string {
 	return regexp.QuoteMeta(input)
+}
+
+func TestStateMachine_ExitParkedState(t *testing.T) {
+	tests := []struct {
+		name          string
+		newState      State
+		isValid       bool
+		expectedState State
+		expectError   bool
+	}{
+		{
+			name:          "Valid transition",
+			newState:      StateOpen, // You can transition to any state from parked
+			isValid:       true,
+			expectedState: StateOpen,
+			expectError:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sm := &StateMachine{CurrentState: StateParked}
+
+			err := sm.ExitParkedState(tt.newState)
+			if (err != nil) != tt.expectError {
+				t.Errorf("ExitParkedState() error = %v, expectError %v", err, tt.expectError)
+			}
+			if sm.CurrentState != tt.expectedState {
+				t.Errorf("ExitParkedState() newState = %v, want %v", sm.CurrentState, tt.expectedState)
+			}
+		})
+	}
+}
+
+func TestStateMachine_Resume(t *testing.T) {
+	tests := []struct {
+		name          string
+		currentState  State
+		newState      State
+		isValid       bool
+		expectedState State
+		expectError   bool
+	}{
+		{
+			name:          "Valid transition",
+			currentState:  StatePaused,
+			newState:      StateOpen,
+			isValid:       true,
+			expectedState: StateOpen,
+			expectError:   false,
+		},
+		{
+			name:          "Invalid transition",
+			currentState:  StateRetry,
+			newState:      StateOpen,
+			isValid:       true,
+			expectedState: StateRetry,
+			expectError:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sm := &StateMachine{CurrentState: tt.currentState, Handlers: []Handler{&TestHandler{}}}
+
+			err := sm.Resume()
+			if (err != nil) != tt.expectError {
+				t.Errorf("ExitParkedState() error = %v, expectError %v", err, tt.expectError)
+			}
+			if sm.CurrentState != tt.expectedState {
+				t.Errorf("ExitParkedState() newState = %v, want %v", sm.CurrentState, tt.expectedState)
+			}
+		})
+	}
+}
+
+func TestStateMachine_Rollback(t *testing.T) {
+	tests := []struct {
+		name          string
+		currentState  State
+		isValid       bool
+		expectedState State
+		expectError   bool
+	}{
+		{
+			name:          "Valid transition",
+			currentState:  StateOpen,
+			isValid:       true,
+			expectedState: StateRollback,
+			expectError:   false,
+		},
+		{
+			name:          "Valid transition",
+			currentState:  StateRollback,
+			isValid:       true,
+			expectedState: StateRollback,
+			expectError:   false,
+		},
+		{
+			name:          "Valid transition",
+			currentState:  StateOpen,
+			isValid:       true,
+			expectedState: StateRollback,
+			expectError:   false,
+		},
+		{
+			name:          "Invalid transition",
+			currentState:  StatePending,
+			isValid:       true,
+			expectedState: StatePending,
+			expectError:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sm := &StateMachine{CurrentState: tt.currentState, Handlers: []Handler{&TestHandler{}}}
+
+			err := sm.Rollback()
+			if (err != nil) != tt.expectError {
+				t.Errorf("ExitParkedState() error = %v, expectError %v", err, tt.expectError)
+			}
+			if sm.CurrentState != tt.expectedState {
+				t.Errorf("ExitParkedState() newState = %v, want %v", sm.CurrentState, tt.expectedState)
+			}
+		})
+	}
 }

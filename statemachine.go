@@ -43,6 +43,7 @@ const (
 	OnRollbackFailed
 	OnCancelled
 	OnParked
+	OnLock
 )
 
 func (e Event) String() string {
@@ -85,6 +86,8 @@ func (e Event) String() string {
 		return "OnCancelled"
 	case OnParked:
 		return "OnParked"
+	case OnLock:
+		return "OnLock"
 	default:
 		return fmt.Sprintf("UnknownEvent(%d)", e)
 	}
@@ -277,28 +280,41 @@ func IsTerminalState(state State) bool {
 
 var ValidTransitions = map[State]map[Event][]State{
 	StatePending: {
-		OnSuccess: []State{StateOpen},
-		OnFailed:  []State{StateFailed},
+		OnSuccess:   []State{StateOpen},
+		OnFailed:    []State{StateFailed},
+		OnCancelled: []State{StateCancelled},
+
+		OnUnknownSituation: []State{StateParked},
 	},
 	StateOpen: {
-		OnSuccess:   []State{StateOpen, StateCompleted},
+		OnSuccess:   []State{StateOpen},
 		OnCompleted: []State{StateCompleted},
 		OnFailed:    []State{StateFailed},
 		OnPause:     []State{StatePaused},
-		OnRollback:  []State{StateRollback},
+		OnRollback:  []State{StateStartRollback},
 		OnRetry:     []State{StateRetry, StateStartRetry},
+		OnLock:      []State{StateInProgress},
+		OnCancelled: []State{StateCancelled},
 
 		OnUnknownSituation: []State{StateParked},
 	},
 	StateRetry: {
-		OnSuccess:          []State{StateOpen},
-		OnFailed:           []State{StateFailed},
+		OnSuccess:      []State{StateOpen},
+		OnFailed:       []State{StateFailed},
+		OnRetry:        []State{StateRetry},
+		OnLock:         []State{StateInProgress},
+		OnCancelled:    []State{StateCancelled},
+		OnResetTimeout: []State{StateFailed},
+
 		OnUnknownSituation: []State{StateParked},
 	},
 	StateRollback: {
-		OnSuccess:          []State{StateRollbackCompleted},
-		OnFailed:           []State{StateFailed},
-		OnCompleted:        []State{StateRollbackCompleted},
+		OnSuccess:           []State{StateOpen},
+		OnRollbackCompleted: []State{StateRollbackCompleted},
+		OnRollbackFailed:    []State{StateRollbackFailed},
+		OnRollback:          []State{StateRollback},
+		OnCancelled:         []State{StateCancelled},
+
 		OnUnknownSituation: []State{StateParked},
 	},
 	StatePaused: {
@@ -307,8 +323,6 @@ var ValidTransitions = map[State]map[Event][]State{
 	StateParked: {
 		OnManualOverride: []State{AnyState},
 	},
-
-	// Add other states and their corresponding events here
 }
 
 func deserializeFromJSON(data []byte) (map[string]interface{}, error) {
@@ -544,7 +558,7 @@ func (sm *StateMachine) determineNewState(context *Context, event Event) (State,
 	case OnSuccess:
 		newState = StateOpen
 	case OnResetTimeout:
-		newState = StateRollback
+		newState = StateFailed
 	case OnPause:
 		newState = StatePaused
 	case OnAlreadyCompleted:
@@ -554,17 +568,26 @@ func (sm *StateMachine) determineNewState(context *Context, event Event) (State,
 		if sm.CurrentState != StateRollback {
 			newState = StateStartRollback
 		}
+	case OnRollbackFailed:
+		newState = StateRollbackFailed
 	case OnResume:
 		newState = StateOpen
 	case OnRetry:
 		newState = StateRetry
 		shouldRetry = true
-
+	case OnCancelled:
+		newState = StateCancelled
+	case OnLock:
+		newState = StateInProgress
 	case OnUnknownSituation:
 		newState = StateParked
 	default:
 		newState = StateParked
 		//TODO: Log Error
+	}
+
+	if !IsValidTransition(sm.CurrentState, event, newState) {
+		return StateUnknown, false, fmt.Errorf("invalid state transition from %s to %s on event %v", sm.CurrentState, newState, event)
 	}
 
 	return newState, shouldRetry, nil
@@ -920,8 +943,14 @@ func LoadStateMachine(name, id string, db *sql.DB) (*StateMachine, error) {
 // TODO: create integration tests for this
 // Rollback rolls back the state machine to the previous state.
 func (sm *StateMachine) Rollback() error {
+	// Check if the transition from the current state should be to StateRollback or StateStartRollback and pick the event accordingly
+	state := StateStartRollback
+	if sm.CurrentState == StateRollback {
+		state = StateRollback
+	}
+
 	// Check if the transition from the current state with OnRollback event is valid
-	if !IsValidTransition(sm.CurrentState, OnRollback, StateRollback) {
+	if !IsValidTransition(sm.CurrentState, OnRollback, state) {
 		return fmt.Errorf("invalid state transition from %s to %s on event %s", sm.CurrentState, StateRollback, "OnRollback")
 	}
 	sm.CurrentState = StateRollback
