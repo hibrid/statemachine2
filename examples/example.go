@@ -105,8 +105,8 @@ func main() {
 	}
 
 	config := statemachine.StateMachineConfig{
-		Name:                 "testing",
-		UniqueStateMachineID: "test1",
+		Name: "testing",
+		//UniqueStateMachineID: "test1",
 		LookupKey:            "5",
 		DB:                   db,
 		Handlers:             nil,

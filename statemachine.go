@@ -399,139 +399,6 @@ func (sm *StateMachine) validateHandlers() error {
 	return nil
 }
 
-/*
-// TODO: create unit tests for this
-// TODO: refactor this to be more readable
-func (sm *StateMachine) handleTransition(context *Context, event Event) error {
-
-	// Leave state callback (before changing the state)
-	if callbacks, ok := sm.Callbacks[string(sm.CurrentState)]; ok {
-		cb := callbacks.LeaveState
-		if err := cb(sm, context); err != nil {
-			return err
-		}
-	}
-
-	sm.CurrentArbitraryData = context.OutputArbitraryData
-	var newState State
-	stepNumber := context.StepNumber
-	// Update transition history
-	historyEntry := TransitionHistory{
-		FromStep:            stepNumber,
-		ToStep:              stepNumber,
-		HandlerName:         context.Handler.Name(),
-		InitialState:        context.InputState,
-		ModifiedState:       sm.CurrentState,
-		InputArbitraryData:  context.InputArbitraryData,
-		OutputArbitraryData: context.OutputArbitraryData,
-		EventEmitted:        event,
-	}
-
-	var remainingDelay time.Duration
-	var shouldRetry bool
-
-	// Handle events and transitions using the handler's Execute methods
-	switch event {
-	case OnCompleted:
-		newState = StateCompleted
-	case OnRollbackCompleted:
-		newState = StateRollbackCompleted
-	case OnFailed:
-		newState = StateFailed
-	case OnSuccess:
-		newState = StateOpen
-		// we're moving forward direction and the FromStep is the previous step for our history entry
-		historyEntry.FromStep = stepNumber - 1
-		sm.ResumeFromStep = stepNumber + 1
-	case OnResetTimeout:
-		newState = StateRollback
-	case OnPause:
-		newState = StatePaused
-	case OnAlreadyCompleted:
-		newState = sm.CurrentState
-	case OnRollback:
-		newState = StateRollback
-		if sm.CurrentState == StateRollback {
-			newState = StateStartRollback
-			// move the resume step back by 1 since we were already on rollback state
-			// and not just entering the rollback state
-			// if we were, we would have set the resume step to the current step
-			sm.ResumeFromStep = stepNumber - 1
-		}
-	case OnResume:
-		newState = StateOpen
-	case OnRetry:
-		newState = StateRetry
-		if newState == sm.CurrentState {
-			sm.RetryCount++
-		}
-		lastRetry := time.Now()
-		sm.LastRetry = &lastRetry
-		remainingDelay = sm.GetRemainingDelay()
-		shouldRetry = true
-
-	case OnUnknownSituation:
-		newState = StateParked
-	default:
-		newState = StateParked
-		//TODO: Log Error
-	}
-
-	if !IsValidTransition(sm.CurrentState, event, newState) {
-		return fmt.Errorf("invalid state transition from %s to %s on event %v", sm.CurrentState, newState, event)
-	}
-
-	// Update the state
-	sm.CurrentState = newState
-	historyEntry.ModifiedState = sm.CurrentState
-	sm.History = append(sm.History, historyEntry)
-
-	// Save state to MySQL or send Kafka event based on configuration.
-	if sm.SaveAfterEachStep {
-		if err := sm.saveStateToDB(); err != nil {
-			// Handle state save error.
-			return err
-		}
-	}
-
-	// Enter state callback (after changing the state)
-	if callbacks, ok := sm.Callbacks[string(sm.CurrentState)]; ok {
-		cb := callbacks.EnterState
-		if err := cb(sm, context); err != nil {
-			return err
-		}
-	}
-
-	// Handle retry logic
-	if shouldRetry {
-		if sm.ExecuteSynchronously {
-			if remainingDelay > 0 {
-				time.Sleep(remainingDelay)
-			}
-			if !IsTerminalState(sm.CurrentState) {
-				return sm.Run()
-			}
-		} else {
-			// Send Kafka event if configured
-			if sm.KafkaEventTopic != "" {
-				if err := sm.sendKafkaEvent(); err != nil {
-					return err
-				}
-			}
-			return nil
-		}
-	} else {
-		if sm.ExecuteSynchronously {
-			if !IsTerminalState(sm.CurrentState) {
-				return sm.Run()
-			}
-		}
-	}
-
-	return nil
-}
-*/
-
 func (sm *StateMachine) handleTransition(context *Context, event Event) error {
 	if err := sm.executeLeaveStateCallback(context); err != nil {
 		return err
@@ -640,6 +507,8 @@ func (sm *StateMachine) updateStateMachineState(context *Context, newState State
 	sm.CurrentState = newState
 	historyEntry.ModifiedState = sm.CurrentState
 	sm.History = append(sm.History, historyEntry)
+	now := time.Now()
+	sm.UnlockedTimestamp = &now // Set the unlocked timestamp to the current time
 
 	if sm.SaveAfterEachStep {
 		if err := sm.saveStateToDB(); err != nil {
@@ -674,9 +543,6 @@ func (sm *StateMachine) determineNewState(context *Context, event Event) (State,
 		newState = StateFailed
 	case OnSuccess:
 		newState = StateOpen
-		// we're moving forward direction and the FromStep is the previous step for our history entry
-		//historyEntry.FromStep = stepNumber - 1
-		//sm.ResumeFromStep = stepNumber + 1
 	case OnResetTimeout:
 		newState = StateRollback
 	case OnPause:
@@ -688,23 +554,10 @@ func (sm *StateMachine) determineNewState(context *Context, event Event) (State,
 		if sm.CurrentState != StateRollback {
 			newState = StateStartRollback
 		}
-		//if sm.CurrentState == StateRollback {
-		// move the resume step back by 1 since we were already on rollback state
-		// and not just entering the rollback state
-		// if we were, we would have set the resume step to the current step
-		//sm.ResumeFromStep = stepNumber - 1
-		//}
 	case OnResume:
 		newState = StateOpen
 	case OnRetry:
 		newState = StateRetry
-		/*if newState == sm.CurrentState {
-			sm.RetryCount++
-		}
-		*/
-		//lastRetry := time.Now()
-		//sm.LastRetry = &lastRetry
-		//remainingDelay = sm.GetRemainingDelay()
 		shouldRetry = true
 
 	case OnUnknownSituation:
@@ -782,9 +635,20 @@ func (sm *StateMachine) checkAndObtainLocalLock() error {
 	defer tx.Rollback() // Rollback the transaction if it's not committed.
 
 	// Check if a global lock exists for this LookupKey.
-	_, err = checkGlobalLockExists(tx, sm)
+	globalLockExists, err := checkGlobalLockExists(tx, sm)
 	if err != nil {
 		return err
+	}
+
+	if globalLockExists {
+		// A global lock exists for this state machine and LookupKey.
+		// we need to check if this instance owns the lock
+		if ownedByThisInstance, err := isGlobalLockOwnedByThisInstance(tx, sm); err != nil {
+			return err
+		} else if !ownedByThisInstance {
+			// This instance already owns the lock, so proceed.
+			return fmt.Errorf("another instance holds the global lock")
+		}
 	}
 
 	// Check if a local lock exists for this state machine.

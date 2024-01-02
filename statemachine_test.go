@@ -1,6 +1,7 @@
 package statemachine
 
 import (
+	"database/sql"
 	"fmt"
 	"regexp"
 	"testing"
@@ -261,6 +262,46 @@ func TestLoadAndLockStateMachine(t *testing.T) {
 	}
 }
 
+func TestStateMachine_determineNewState(t *testing.T) {
+	tests := []struct {
+		name          string
+		currentState  State
+		event         Event
+		expectedState State
+		expectedRetry bool
+	}{
+		{"OnCompleted", StateOpen, OnCompleted, StateCompleted, false},
+		{"OnRollbackCompleted", StateRollback, OnRollbackCompleted, StateRollbackCompleted, false},
+		{"OnFailed", StateOpen, OnFailed, StateFailed, false},
+		{"OnSuccess", StateOpen, OnSuccess, StateOpen, false},
+		{"OnResetTimeout", StateOpen, OnResetTimeout, StateRollback, false},
+		{"OnPause", StateOpen, OnPause, StatePaused, false},
+		{"OnAlreadyCompleted", StateCompleted, OnAlreadyCompleted, StateCompleted, false},
+		{"OnRollback", StateOpen, OnRollback, StateStartRollback, false},
+		{"OnRollbackAlreadyInRollback", StateRollback, OnRollback, StateRollback, false},
+		{"OnResume", StatePaused, OnResume, StateOpen, false},
+		{"OnRetry", StateRetry, OnRetry, StateRetry, true},
+		{"OnUnknownSituation", StateOpen, OnUnknownSituation, StateParked, false},
+		{"DefaultCase", StateOpen, Event(999), StateParked, false}, // Testing default case
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sm := &StateMachine{CurrentState: tt.currentState}
+			newState, shouldRetry, err := sm.determineNewState(&Context{}, tt.event)
+			if err != nil {
+				t.Errorf("determineNewState() error = %v, wantErr %v", err, false)
+			}
+			if newState != tt.expectedState {
+				t.Errorf("determineNewState() newState = %v, want %v", newState, tt.expectedState)
+			}
+			if shouldRetry != tt.expectedRetry {
+				t.Errorf("determineNewState() shouldRetry = %v, want %v", shouldRetry, tt.expectedRetry)
+			}
+		})
+	}
+}
+
 func TestLoadStateMachineFromDB(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -317,6 +358,127 @@ func TestLoadStateMachineFromDB(t *testing.T) {
 	// Assert that all expectations were met
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("there were unfulfilled expectations: %s", err)
+	}
+}
+
+func TestStateMachine_executeLeaveStateCallback(t *testing.T) {
+	sm := &StateMachine{
+		CurrentState: StateOpen,
+		Callbacks: map[string]StateCallbacks{
+			"open": {
+				LeaveState: func(sm *StateMachine, ctx *Context) error {
+					// Mock callback logic
+					return nil
+				},
+			},
+		},
+	}
+	context := &Context{} // Mock context as needed
+
+	err := sm.executeLeaveStateCallback(context)
+	if err != nil {
+		t.Errorf("executeLeaveStateCallback() error = %v, wantErr %v", err, false)
+	}
+
+}
+
+func TestStateMachine_CalculateNextRetryDelay(t *testing.T) {
+	tests := []struct {
+		name          string
+		retryCount    int
+		baseDelay     time.Duration
+		maxTimeout    time.Duration
+		expectedDelay time.Duration
+	}{
+		{
+			name:          "First retry",
+			retryCount:    0,
+			baseDelay:     1 * time.Second,
+			maxTimeout:    60 * time.Second,
+			expectedDelay: 1 * time.Second,
+		},
+		{
+			name:          "Second retry",
+			retryCount:    1,
+			baseDelay:     1 * time.Second,
+			maxTimeout:    60 * time.Second,
+			expectedDelay: 2 * time.Second,
+		},
+		{
+			name:          "Exceeds max timeout",
+			retryCount:    10,
+			baseDelay:     1 * time.Second,
+			maxTimeout:    10 * time.Second,
+			expectedDelay: 10 * time.Second,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sm := &StateMachine{
+				RetryCount: tt.retryCount,
+				BaseDelay:  tt.baseDelay,
+				MaxTimeout: tt.maxTimeout,
+			}
+
+			got := sm.CalculateNextRetryDelay()
+			if got != tt.expectedDelay {
+				t.Errorf("CalculateNextRetryDelay() = %v, want %v", got, tt.expectedDelay)
+			}
+		})
+	}
+}
+
+func TestStateMachine_GetRemainingDelay(t *testing.T) {
+	now := time.Now()
+	twentySecondsAgo := now.Add(-20 * time.Second)
+	tests := []struct {
+		name          string
+		lastRetry     *time.Time
+		retryCount    int
+		baseDelay     time.Duration
+		expectedDelay time.Duration
+		maxDelay      time.Duration
+	}{
+		{
+			name:          "LastRetry is nil",
+			lastRetry:     nil,
+			expectedDelay: 0,
+			maxDelay:      60 * time.Second,
+		},
+		{
+			name:          "Next retry time in the future",
+			lastRetry:     &now,
+			retryCount:    1,
+			baseDelay:     10 * time.Second,
+			expectedDelay: 20 * time.Second,
+			maxDelay:      60 * time.Second,
+		},
+		{
+			name:          "Next retry time in the past",
+			lastRetry:     &twentySecondsAgo,
+			retryCount:    1,
+			baseDelay:     10 * time.Second,
+			expectedDelay: 0,
+			maxDelay:      60 * time.Second,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sm := &StateMachine{
+				LastRetry:  tt.lastRetry,
+				BaseDelay:  tt.baseDelay,
+				RetryCount: tt.retryCount,
+				MaxTimeout: tt.maxDelay,
+			}
+
+			got := sm.GetRemainingDelay()
+			// Allow a small margin of error for time calculations
+			if got < tt.expectedDelay-time.Second || got > tt.expectedDelay+time.Second {
+				t.Errorf("GetRemainingDelay() = %v, want %v", got, tt.expectedDelay)
+			}
+		})
 	}
 }
 
@@ -424,53 +586,43 @@ func TestStateMachine_Run_Integration(t *testing.T) {
 		usesGlobalLock,
 		usesLocalLock).WillReturnResult(sqlmock.NewResult(1, 1))
 
-	// Obtain the local lock
+	// Obtain the local lock with a global lock
 	mock.ExpectBegin()
 	mock.ExpectQuery(escapeRegexChars(checkGlobalLockExistsSQL())).WithArgs(config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
+	mock.ExpectQuery(escapeRegexChars(isGlobalLockOwnedByThisInstanceSQL())).WithArgs(config.Name, config.UniqueStateMachineID, config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
 	mock.ExpectQuery(escapeRegexChars(checkLocalLockExistsSQL(config.Name))).WithArgs(config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
 	mock.ExpectQuery(escapeRegexChars(isLocalLockOwnedByThisInstanceSQL(config.Name))).WithArgs(config.UniqueStateMachineID, config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
-	//mock.ExpectQuery(escapeRegexChars(isGlobalLockOwnedByThisInstanceSQL())).WithArgs(config.Name, config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
+
 	mock.ExpectRollback()
-
-	/* // if obtain the local lock
-		mock.ExpectExec(escapeRegexChars(obtainLocalLockSQL(config.Name))).WithArgs(
-			config.Name,
-			config.UniqueStateMachineID,
-			config.LookupKey,
-		).WillReturnResult(sqlmock.NewResult(1, 1))
-
-	mock.ExpectCommit()
-	*/
 
 	// Update after Handler 1
 	mock.ExpectBegin()
-	mock.ExpectExec(escapeRegexChars(updateStateMachineStateSQL(config.Name))).WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(escapeRegexChars(updateStateMachineStateSQL(config.Name))).WithArgs(StateOpen, sqlmock.AnyArg(), 1, sqlmock.AnyArg(), config.UniqueStateMachineID).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
-	// Obtain the local lock
+	// Obtain the local lock without a global lock
 	mock.ExpectBegin()
-	mock.ExpectQuery(escapeRegexChars(checkGlobalLockExistsSQL())).WithArgs(config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
+	mock.ExpectQuery(escapeRegexChars(checkGlobalLockExistsSQL())).WithArgs(config.LookupKey).WillReturnError(sql.ErrNoRows)
 	mock.ExpectQuery(escapeRegexChars(checkLocalLockExistsSQL(config.Name))).WithArgs(config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
 	mock.ExpectQuery(escapeRegexChars(isLocalLockOwnedByThisInstanceSQL(config.Name))).WithArgs(config.UniqueStateMachineID, config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
-	//mock.ExpectQuery(escapeRegexChars(isGlobalLockOwnedByThisInstanceSQL())).WithArgs(config.Name, config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
 	mock.ExpectRollback()
 
 	// Update after Handler 2
 	mock.ExpectBegin()
-	mock.ExpectExec(escapeRegexChars(updateStateMachineStateSQL(config.Name))).WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(escapeRegexChars(updateStateMachineStateSQL(config.Name))).WithArgs(StateOpen, sqlmock.AnyArg(), 2, sqlmock.AnyArg(), config.UniqueStateMachineID).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
-	// Obtain the local lock
+	// Obtain the local lock without a global lock
 	mock.ExpectBegin()
-	mock.ExpectQuery(escapeRegexChars(checkGlobalLockExistsSQL())).WithArgs(config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
+	mock.ExpectQuery(escapeRegexChars(checkGlobalLockExistsSQL())).WithArgs(config.LookupKey).WillReturnError(sql.ErrNoRows)
 	mock.ExpectQuery(escapeRegexChars(checkLocalLockExistsSQL(config.Name))).WithArgs(config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
 	mock.ExpectQuery(escapeRegexChars(isLocalLockOwnedByThisInstanceSQL(config.Name))).WithArgs(config.UniqueStateMachineID, config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
-	//mock.ExpectQuery(escapeRegexChars(isGlobalLockOwnedByThisInstanceSQL())).WithArgs(config.Name, config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
+
 	mock.ExpectRollback()
 
 	// Update to record the completion of the state machine
 	mock.ExpectBegin()
-	mock.ExpectExec(escapeRegexChars(updateStateMachineStateSQL(config.Name))).WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(escapeRegexChars(updateStateMachineStateSQL(config.Name))).WithArgs(StateCompleted, sqlmock.AnyArg(), 2, sqlmock.AnyArg(), config.UniqueStateMachineID).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
 	sm, err := NewStateMachine(config)
@@ -488,6 +640,19 @@ func TestStateMachine_Run_Integration(t *testing.T) {
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("there were unfulfilled expectations: %s", err)
 	}
+
+	if sm.CurrentState != StateCompleted {
+		t.Errorf("Run() did not result in a completed state machine")
+	}
+
+	if sm.LastRetry != nil {
+		t.Errorf("Run() should not have set LastRetry")
+	}
+
+	if sm.ResumeFromStep != 2 {
+		t.Errorf("Run() should have set ResumeFromStep to 2")
+	}
+
 }
 
 func TestCreateGlobalLockTableIfNotExists(t *testing.T) {
@@ -556,17 +721,19 @@ func TestUpdateStateMachineState(t *testing.T) {
 	defer db.Close()
 
 	sm := &StateMachine{
-		DB: db,
+		DB:           db,
+		CurrentState: StateOpen,
 		// Initialize other necessary fields, e.g., Name, UniqueID, ResumeFromStep
 	}
+	sm.SetUniqueID("test_id")
 
 	// Set up the expected SQL query
 	tableName := normalizeTableName(sm.Name)
-	updateSQL := fmt.Sprintf("UPDATE %s SET CurrentState = \\?, SerializedState = \\?, UpdatedTimestamp = NOW\\(\\), ResumeFromStep = \\? WHERE ID = \\?;", tableName)
+	updateSQL := fmt.Sprintf("UPDATE %s SET CurrentState = \\?, SerializedState = \\?, UpdatedTimestamp = NOW\\(\\), ResumeFromStep = \\?, UnlockedTimestamp = \\? WHERE ID = \\?;", tableName)
 
 	// Define the expected behavior of the mock
 	mock.ExpectBegin()
-	mock.ExpectExec(updateSQL).WithArgs(sm.CurrentState, sqlmock.AnyArg(), sm.ResumeFromStep, sm.UniqueID).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(updateSQL).WithArgs(sm.CurrentState, sqlmock.AnyArg(), sm.ResumeFromStep, sqlmock.AnyArg(), "test_id").WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
 	// Call the function
@@ -581,6 +748,7 @@ func TestUpdateStateMachineState(t *testing.T) {
 	}
 }
 
+/*
 func TestStateMachine_CalculateNextRetryDelay(t *testing.T) {
 	sm := &StateMachine{
 		RetryCount: 2,
@@ -594,6 +762,7 @@ func TestStateMachine_CalculateNextRetryDelay(t *testing.T) {
 		t.Errorf("CalculateNextRetryDelay() = %v; want %v", actualDelay, expectedDelay)
 	}
 }
+*/
 
 func escapeRegexChars(input string) string {
 	return regexp.QuoteMeta(input)
