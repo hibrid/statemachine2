@@ -58,6 +58,39 @@ func checkLockExists(tx *sql.Tx, query string, args ...interface{}) (bool, error
 	return false, err
 }
 
+func removeGlobalLockOwnedByThisInstanceSQL() string {
+	return "UPDATE GLOBAL_LOCK SET UnlockTimestamp = NOW() WHERE StateMachineType = ? AND StateMachineID = ? AND LookupKey = ? AND (UnlockTimestamp IS NULL OR UnlockTimestamp > NOW());"
+}
+func removeGlobalLockOwnedByThisInstance(tx *sql.Tx, sm *StateMachine) error {
+	_, err := tx.Exec(removeGlobalLockOwnedByThisInstanceSQL(), sm.Name, sm.UniqueID, sm.LookupKey)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func removeGlobalLockOwnedByThisMachineTypeSQL() string {
+	return "UPDATE GLOBAL_LOCK SET UnlockTimestamp = NOW() WHERE StateMachineType = ? AND LookupKey = ? AND (UnlockTimestamp IS NULL OR UnlockTimestamp > NOW());"
+}
+func removeGlobalLockOwnedByThisMachineType(tx *sql.Tx, sm *StateMachine) error {
+	_, err := tx.Exec(removeGlobalLockOwnedByThisInstanceSQL(), sm.Name, sm.LookupKey)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func removeAllGlobalLocksSQL() string {
+	return "UPDATE GLOBAL_LOCK SET UnlockTimestamp = NOW() WHERE AND LookupKey = ? AND (UnlockTimestamp IS NULL OR UnlockTimestamp > NOW());"
+}
+func removeAllGlobalLocks(tx *sql.Tx, sm *StateMachine) error {
+	_, err := tx.Exec(removeAllGlobalLocksSQL(), sm.Name, sm.LookupKey)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func isGlobalLockOwnedByThisInstanceSQL() string {
 	return "SELECT StateMachineID FROM GLOBAL_LOCK WHERE StateMachineType = ? AND StateMachineID = ? AND LookupKey = ? AND (UnlockTimestamp IS NULL OR UnlockTimestamp > NOW()) FOR UPDATE;"
 }
@@ -471,40 +504,6 @@ func loadAndLockStateMachine(sm *StateMachine) (*StateMachine, error) {
 	return loadedSM, nil
 }
 
-// TODO: use the new unique id generator and test the local and global lock logic
-// Test: create a state machine with a local lock
-// Test: Create a state machine with a global lock
-// Test: Create a state machine with a local lock and then update it to use a global lock
-// Test: Create a state machine with a global lock and then update it to use a local lock
-// Test: Create a state machine without a local lock and then update it to use a local lock
-// Test: Create a state machine without a global lock and then update it to use a global lock
-// Test: Forward execution to completion
-// Test: Forward execution to a terminal state
-// Test: Forward execution to a terminal state and then restart execution
-// Test: Forward execution to a terminal state and then restart execution from a previous state
-// Test: Forward execution cases without a lock
-// Test: Forward execution cases with a local lock
-// Test: Forward execution cases with a global lock
-// Test: Entering a terminal state with a local lock
-// Test: Entering a terminal state with a global lock
-// Test: Entering a terminal state with no lock
-// Test: Entering a terminal state with a local lock and then restarting execution
-// Test: Entering a terminal state with a global lock and then restarting execution
-// Test: Entering a terminal state with no lock and then restarting execution
-// Test: Entering a terminal state with a local lock and then restarting execution from a previous state
-// Test: Entering a terminal state with a global lock and then restarting execution from a previous state
-// Test: Pausing execution with a local lock
-// Test: Pausing execution with a global lock
-// Test: Pausing execution with no lock
-// Test: Pausing execution with a local lock and then restarting execution
-// Test: Pausing execution with a global lock and then restarting execution
-// Test: Pausing execution with no lock and then restarting execution
-// Test: Pausing execution with a local lock and then restarting execution from a previous state
-// TODO: update for completed state for lock
-// TODO: remove lock from state machine
-// TODO: remove lock from global lock table
-// TODO: Update the lock logic to make sure it's not considering machine's that are in a terminal state or don't have a lock
-
 func removeLocalLockSQL(tableName string) string {
 	return fmt.Sprintf("UPDATE %s UnlockedTimestamp = NOW() WHERE ID = ?;", tableName)
 }
@@ -540,6 +539,11 @@ func updateStateMachineState(sm *StateMachine, newState State) error {
 	if err != nil {
 		tx.Rollback()
 		return err
+	}
+
+	if !sm.UnlockGlobalLockAfterEachStep || IsTerminalState(newState) {
+		// remove global lock
+		removeGlobalLockOwnedByThisInstance(tx, sm)
 	}
 
 	return tx.Commit()

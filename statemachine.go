@@ -15,9 +15,9 @@ import (
 
 type Callback func(*StateMachine, *Context) error
 type StateCallbacks struct {
-	AfterEvent Callback
-	EnterState Callback
-	LeaveState Callback
+	AfterEvent Callback // callback executes immediately after the event is handled and before any state transition
+	EnterState Callback // callback executes immediately after the state transition
+	LeaveState Callback // callback executes immediately before the state transition
 }
 
 type ForwardEvent int
@@ -422,19 +422,20 @@ const (
 
 // StateMachine represents a state machine instance.
 type StateMachine struct {
-	Name                 string                    `json:"name"`
-	UniqueID             string                    `json:"id"`
-	Handlers             []Handler                 `json:"-"` // List of handlers with names
-	Callbacks            map[string]StateCallbacks `json:"-"`
-	CurrentState         State                     `json:"currentState"`
-	DB                   *sql.DB                   `json:"-"`
-	KafkaProducer        *kafka.Producer           `json:"-"`
-	LookupKey            string                    `json:"lookupKey"`            // User or account ID for locking
-	ResumeFromStep       int                       `json:"resumeFromStep"`       // Step to resume from when recreated
-	SaveAfterEachStep    bool                      `json:"saveAfterStep"`        // Flag to save state after each step
-	KafkaEventTopic      string                    `json:"kafkaEventTopic"`      // Kafka topic to send events
-	History              []TransitionHistory       `json:"history"`              // History of executed transitions
-	ExecuteSynchronously bool                      `json:"executeSynchronously"` // Flag to control whether to execute the next step immediately
+	Name                          string                    `json:"name"`
+	UniqueID                      string                    `json:"id"`
+	Handlers                      []Handler                 `json:"-"` // List of handlers with names
+	Callbacks                     map[string]StateCallbacks `json:"-"`
+	CurrentState                  State                     `json:"currentState"`
+	DB                            *sql.DB                   `json:"-"`
+	KafkaProducer                 *kafka.Producer           `json:"-"`
+	LookupKey                     string                    `json:"lookupKey"`                     // User or account ID for locking
+	ResumeFromStep                int                       `json:"resumeFromStep"`                // Step to resume from when recreated
+	SaveAfterEachStep             bool                      `json:"saveAfterStep"`                 // Flag to save state after each step
+	UnlockGlobalLockAfterEachStep bool                      `json:"unlockGlobalLockAfterEachStep"` // Flag to unlock global lock after each step
+	KafkaEventTopic               string                    `json:"kafkaEventTopic"`               // Kafka topic to send events
+	History                       []TransitionHistory       `json:"history"`                       // History of executed transitions
+	ExecuteSynchronously          bool                      `json:"executeSynchronously"`          // Flag to control whether to execute the next step immediately
 
 	CurrentArbitraryData map[string]interface{} `json:"currentArbitraryData"` // Additional field for storing arbitrary data
 	CreatedTimestamp     time.Time              `json:"createdTimestamp"`
@@ -492,7 +493,6 @@ type StateMachineConfig struct {
 	ExecuteSynchronously bool
 	Handlers             []Handler
 	RetryPolicy          RetryPolicy
-	SaveAfterEachStep    bool
 	LockType             LockType
 }
 
@@ -666,6 +666,10 @@ func (sm *StateMachine) validateHandlers() error {
 		return fmt.Errorf("no handlers found")
 	}
 	return nil
+}
+
+func (sm *StateMachine) HandleEvent(context *Context, event Event) error {
+	return sm.handleTransition(context, event)
 }
 
 func (sm *StateMachine) handleTransition(context *Context, event Event) error {
@@ -860,8 +864,7 @@ func (sm *StateMachine) determineNewState(context *Context, event Event) (State,
 	return newState, shouldRetry, nil
 }
 
-// TODO: create unit tests for this
-// shouldCheckLocks is replaced by checkAndAcquireLocks
+// checkAndAcquireLocks checks if locks exist for the state machine and obtains them if possible.
 func (sm *StateMachine) checkAndAcquireLocks() error {
 
 	switch sm.LockType {
@@ -924,7 +927,7 @@ func (sm *StateMachine) checkAndObtainLocalLock() error {
 	}
 	defer tx.Rollback() // Rollback the transaction if it's not committed.
 
-	// Check if a global lock exists for this LookupKey.
+	// Check if a global lock exists for this LookupKey. We can't get a local lock if a global lock exists and this instance don't own it.
 	globalLockExists, err := checkGlobalLockExists(tx, sm)
 	if err != nil {
 		return err
@@ -1001,7 +1004,7 @@ func IsValidTransition(currentState State, event Event, newState State) bool {
 	return false
 }
 
-// TODO: create unit tests for this
+// CalculateNextRetryDelay calculates the next retry delay based on the retry policy.
 func (sm *StateMachine) CalculateNextRetryDelay() time.Duration {
 	baseDelay := sm.BaseDelay // Starting delay of 1 second
 	retryCount := sm.RetryCount
@@ -1011,8 +1014,8 @@ func (sm *StateMachine) CalculateNextRetryDelay() time.Duration {
 	return delay
 }
 
-// create unit tests for this
 // Run executes the state machine.
+// Run can be called on any instantiated state machine.
 func (sm *StateMachine) Run() error {
 	if err := sm.checkAndAcquireLocks(); err != nil {
 		return err
@@ -1026,7 +1029,11 @@ func (sm *StateMachine) Run() error {
 	return sm.processStateMachine(context)
 }
 
-// TODO: create unit tests for this
+// GetRemainingDelay returns the remaining delay until the next retry.
+// If the delay is greater than the max timeout, it returns -1.
+// If the delay is less than 0, it returns 0.
+// Otherwise, it returns the remaining delay.
+// This is useful if you want to now how long to sleep before retrying.
 func (sm *StateMachine) GetRemainingDelay() time.Duration {
 	lastRetry := time.Now()
 	if sm.LastRetry != nil {
@@ -1045,12 +1052,7 @@ func (sm *StateMachine) GetRemainingDelay() time.Duration {
 	return remainingDelay
 }
 
-// TODO: Create Unit tests for this
-func (sm *StateMachine) HandleEvent(context *Context, event Event) error {
-	return sm.handleTransition(context, event)
-}
-
-// NewStateMachine initializes a new StateMachine instance.
+// NewStateMachine initializes a new StateMachine instance with the given config and sensible defaults if ommitted.
 func NewStateMachine(config StateMachineConfig) (*StateMachine, error) {
 	err := CreateGlobalLockTableIfNotExists(config.DB)
 	if err != nil {
@@ -1075,21 +1077,22 @@ func NewStateMachine(config StateMachineConfig) (*StateMachine, error) {
 	}
 
 	sm := &StateMachine{
-		Name:                 config.Name,
-		UniqueID:             config.UniqueStateMachineID,
-		LookupKey:            config.LookupKey,
-		DB:                   config.DB,
-		KafkaProducer:        config.KafkaProducer,
-		KafkaEventTopic:      config.KafkaEventTopic,
-		ExecuteSynchronously: config.ExecuteSynchronously,
-		CreatedTimestamp:     time.Now(),
-		UpdatedTimestamp:     time.Now(),
-		CurrentState:         StatePending,
-		SaveAfterEachStep:    config.SaveAfterEachStep,
-		LockType:             config.LockType,
-		RetryType:            config.RetryPolicy.RetryType,
-		MaxTimeout:           config.RetryPolicy.MaxTimeout,
-		BaseDelay:            config.RetryPolicy.BaseDelay,
+		Name:                          config.Name,
+		UniqueID:                      config.UniqueStateMachineID,
+		LookupKey:                     config.LookupKey,
+		DB:                            config.DB,
+		KafkaProducer:                 config.KafkaProducer,
+		KafkaEventTopic:               config.KafkaEventTopic,
+		ExecuteSynchronously:          config.ExecuteSynchronously,
+		CreatedTimestamp:              time.Now(),
+		UpdatedTimestamp:              time.Now(),
+		CurrentState:                  StatePending,
+		SaveAfterEachStep:             true,
+		LockType:                      config.LockType,
+		RetryType:                     config.RetryPolicy.RetryType,
+		MaxTimeout:                    config.RetryPolicy.MaxTimeout,
+		BaseDelay:                     config.RetryPolicy.BaseDelay,
+		UnlockGlobalLockAfterEachStep: true,
 	}
 
 	if len(config.Handlers) > 0 {
@@ -1116,7 +1119,6 @@ func NewStateMachine(config StateMachineConfig) (*StateMachine, error) {
 	return sm, nil
 }
 
-// TODO: create unit tests for this
 // GenerateAndSetUniqueID generates a unique ID for the StateMachine and updates the UniqueID field.
 func (sm *StateMachine) GenerateAndSetUniqueID() string {
 	// Generate a unique ID (e.g., UUID)
@@ -1125,34 +1127,30 @@ func (sm *StateMachine) GenerateAndSetUniqueID() string {
 	return uniqueID
 }
 
-// TODO: create unit tests for this
-// TODO: create integration tests for this
-// TODO: create unit tests for this
+// SetUniqueID sets the unique ID for the state machine.
+// This can be set through the config when creating the state machine and this will overwrite that value.
 func (sm *StateMachine) SetUniqueID(uniqueStateMachineID string) *StateMachine {
 	sm.UniqueID = uniqueStateMachineID
 	return sm
 }
 
-// TODO: create unit tests for this
-// TODO: create integration tests for this
 // SetLookupKey sets the lookup key for the state machine. Something like a user or account ID to lock on.
+// This can be set through the config when creating the state machine and this will overwrite that value.
 func (sm *StateMachine) SetLookupKey(lookUpKey string) *StateMachine {
 	sm.LookupKey = lookUpKey
 	return sm
 }
 
-// TODO: create unit tests for this
-// TODO: create integration tests for this
-// SetInitialState sets the force sets the state of the state machine without validation.
-func (sm *StateMachine) SetState(state State) *StateMachine {
+// ForceState sets the state of the state machine without validation.
+// This is useful if you want to force the state machine to a specific state.
+// This is not recommended unless you know what you are doing.
+func (sm *StateMachine) ForceState(state State) *StateMachine {
 	sm.CurrentState = state
 	return sm
 }
 
-// TODO: create unit tests for this
-// TODO: create integration tests for this
-// UpdateState attempts to update the state of the state machine, returning an error if the transition is invalid.
-func (sm *StateMachine) UpdateState(newState State, event Event) error {
+// SetState sets the state machine's state, returning an error if the transition is invalid.
+func (sm *StateMachine) SetState(newState State, event Event) error {
 	if !IsValidTransition(sm.CurrentState, event, newState) {
 		return fmt.Errorf("invalid state transition from %s to %s on event %v", sm.CurrentState, newState, event)
 	}
@@ -1160,16 +1158,12 @@ func (sm *StateMachine) UpdateState(newState State, event Event) error {
 	return nil
 }
 
-// TODO: create unit tests for this
-// TODO: create integration tests for this
 // AddHandler adds a handler to the state machine.
 func (sm *StateMachine) AddHandler(handler Handler, name string) *StateMachine {
 	sm.Handlers = append(sm.Handlers, handler)
 	return sm
 }
 
-// TODO: create unit tests for this
-// TODO: create integration tests for this
 // RegisterCallback registers a callback for a statemachine event
 func (sm *StateMachine) RegisterEventCallback(state State, callbacks StateCallbacks) *StateMachine {
 	if sm.Callbacks == nil {
@@ -1179,18 +1173,29 @@ func (sm *StateMachine) RegisterEventCallback(state State, callbacks StateCallba
 	return sm
 }
 
-// TODO: create unit tests for this
-// TODO: create integration tests for this
 // SaveState saves the state machine's state to the database.
 func (sm *StateMachine) SaveState() error {
-	// Refactored to use a more descriptive method name
 	return sm.saveStateToDB()
 }
 
-// TODO: create unit tests for this
-// TODO: create integration tests for this
-// LoadStateMachine loads a StateMachine from the database.
-func LoadStateMachine(name, id string, db *sql.DB) (*StateMachine, error) {
+// DisableAutoGlobalUnlock disables removing the global lock between each step.
+// This is useful if you want to run the state machine in a loop.
+// You will need to manually unlock the global lock when you are done.
+// The Global lock is auto removed when a terminal state is reached.
+func (sm *StateMachine) DisableAutoGlobalUnlock() *StateMachine {
+	sm.UnlockGlobalLockAfterEachStep = false
+	return sm
+}
+
+// DisableSaveAfterEachStep disables saving the state after each step.
+func (sm *StateMachine) DisableSaveAfterEachStep() *StateMachine {
+	sm.SaveAfterEachStep = false
+	return sm
+}
+
+// LockAndLoadStateMachine loads a StateMachine from the database.
+// This is useful if you want to resume or continue a state machine that was previously created and has not completed.
+func LockAndLoadStateMachine(name, id string, db *sql.DB) (*StateMachine, error) {
 	sm, err := loadStateMachineFromDB(name, id, db)
 	if err != nil {
 		return nil, err
@@ -1211,9 +1216,7 @@ func LoadStateMachine(name, id string, db *sql.DB) (*StateMachine, error) {
 	return sm, nil
 }
 
-// TODO: create unit tests for this
-// TODO: create integration tests for this
-// Rollback rolls back the state machine to the previous state.
+// Rollback sets the state machine to enter a rollback state, it will attempt to continue to roll back all steps.
 func (sm *StateMachine) Rollback() error {
 	// Check if the transition from the current state should be to StateRollback or StateStartRollback and pick the event accordingly
 	state := StateStartRollback
@@ -1229,9 +1232,9 @@ func (sm *StateMachine) Rollback() error {
 	return sm.Run()
 }
 
-// TODO: create unit tests for this
-// TODO: create integration tests for this
 // Resume resumes the execution of the state machine.
+// This is useful if you want to resume the state machine after it has been paused.
+// This only works when you are in a paused state and the state machine has not been completed.
 func (sm *StateMachine) Resume() error {
 	// Check if the transition from the current state with OnResume event is valid
 	if !IsValidTransition(sm.CurrentState, OnResume, StateOpen) {
@@ -1241,8 +1244,6 @@ func (sm *StateMachine) Resume() error {
 	return sm.Run()
 }
 
-// TODO: create unit tests for this
-// TODO: create integration tests for this
 // ExitParkedState exits the parked state into the specified state.
 func (sm *StateMachine) ExitParkedState(newState State) error {
 	// Validate the transition out of StateParked

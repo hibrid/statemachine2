@@ -112,7 +112,6 @@ func main() {
 		Handlers:             nil,
 		ExecuteSynchronously: true,
 		RetryPolicy:          retryPolicy,
-		SaveAfterEachStep:    true,
 		LockType:             statemachine.LocalLock,
 	}
 
