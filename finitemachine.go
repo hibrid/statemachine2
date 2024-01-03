@@ -8,7 +8,7 @@ type Context struct {
 	EventEmitted        Event                     `json:"eventEmitted"`
 	InputArbitraryData  map[string]interface{}    `json:"inputArbitraryData"`
 	OutputArbitraryData map[string]interface{}    `json:"outputArbitraryData"`
-	Handler             Handler                   `json:"-"`
+	Handler             StepHandler               `json:"-"`
 	Callbacks           map[string]StateCallbacks `json:"-"`
 	StepNumber          int                       `json:"stepNumber"`
 	TransitionHistory   []TransitionHistory       `json:"transitionHistory"`
@@ -21,7 +21,7 @@ func (smCtx *Context) finishHandlingContext(event Event, input, output map[strin
 	smCtx.OutputArbitraryData = output
 	// Trigger after-event callback
 	if callbacks, ok := smCtx.Callbacks[smCtx.InputState.String()]; ok {
-		cb := callbacks.AfterEvent
+		cb := callbacks.AfterAnEvent
 		if err := cb(smCtx.StateMachine, smCtx); err != nil {
 			return err // OnError is a hypothetical event representing an error state
 		}

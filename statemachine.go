@@ -15,9 +15,9 @@ import (
 
 type Callback func(*StateMachine, *Context) error
 type StateCallbacks struct {
-	AfterEvent Callback // callback executes immediately after the event is handled and before any state transition
-	EnterState Callback // callback executes immediately after the state transition
-	LeaveState Callback // callback executes immediately before the state transition
+	AfterAnEvent  Callback // callback executes immediately after the event is handled and before any state transition
+	BeforeTheStep Callback // callback executes immediately after the state transition
+	AfterTheStep  Callback // callback executes immediately before the state transition
 }
 
 type ForwardEvent int
@@ -424,7 +424,7 @@ const (
 type StateMachine struct {
 	Name                          string                    `json:"name"`
 	UniqueID                      string                    `json:"id"`
-	Handlers                      []Handler                 `json:"-"` // List of handlers with names
+	Handlers                      []StepHandler             `json:"-"` // List of handlers with names
 	Callbacks                     map[string]StateCallbacks `json:"-"`
 	CurrentState                  State                     `json:"currentState"`
 	DB                            *sql.DB                   `json:"-"`
@@ -491,7 +491,7 @@ type StateMachineConfig struct {
 	KafkaProducer        *kafka.Producer
 	KafkaEventTopic      string
 	ExecuteSynchronously bool
-	Handlers             []Handler
+	Handlers             []StepHandler
 	RetryPolicy          RetryPolicy
 	LockType             LockType
 }
@@ -508,8 +508,8 @@ type TransitionHistory struct {
 	EventEmitted        Event                  `json:"eventEmitted"`        // Event emitted by the transition
 }
 
-// Handler defines the interface for state machine handlers.
-type Handler interface {
+// StepHandler defines the interface for state machine handlers.
+type StepHandler interface {
 	Name() string
 	ExecuteForward(data map[string]interface{}, transitionHistory []TransitionHistory) (ForwardEvent, map[string]interface{}, error)
 	ExecuteBackward(data map[string]interface{}, transitionHistory []TransitionHistory) (BackwardEvent, map[string]interface{}, error)
@@ -629,7 +629,7 @@ func (sm *StateMachine) processStateMachine(context *Context) error {
 		sm.CurrentArbitraryData = make(map[string]interface{})
 	}
 
-	var handler Handler
+	var handler StepHandler
 	// Let's check if this is a success and we are done
 	if sm.ResumeFromStep >= len(sm.Handlers) || sm.ResumeFromStep < 0 {
 		handler = &completeHandler{}
@@ -743,7 +743,7 @@ func (sm *StateMachine) handleRetryLogic(shouldRetry bool) error {
 
 func (sm *StateMachine) executeLeaveStateCallback(context *Context) error {
 	if callbacks, ok := sm.Callbacks[string(sm.CurrentState)]; ok {
-		if err := callbacks.LeaveState(sm, context); err != nil {
+		if err := callbacks.AfterTheStep(sm, context); err != nil {
 			return err
 		}
 	}
@@ -803,7 +803,7 @@ func (sm *StateMachine) updateStateMachineState(context *Context, newState State
 
 func (sm *StateMachine) executeEnterStateCallback(context *Context) error {
 	if callbacks, ok := sm.Callbacks[string(sm.CurrentState)]; ok {
-		if err := callbacks.EnterState(sm, context); err != nil {
+		if err := callbacks.BeforeTheStep(sm, context); err != nil {
 			return err
 		}
 	}
@@ -1158,14 +1158,14 @@ func (sm *StateMachine) SetState(newState State, event Event) error {
 	return nil
 }
 
-// AddHandler adds a handler to the state machine.
-func (sm *StateMachine) AddHandler(handler Handler, name string) *StateMachine {
+// AddStep adds a handler to the state machine.
+func (sm *StateMachine) AddStep(handler StepHandler, name string) *StateMachine {
 	sm.Handlers = append(sm.Handlers, handler)
 	return sm
 }
 
 // RegisterCallback registers a callback for a statemachine event
-func (sm *StateMachine) RegisterEventCallback(state State, callbacks StateCallbacks) *StateMachine {
+func (sm *StateMachine) AddStateCallbacks(state State, callbacks StateCallbacks) *StateMachine {
 	if sm.Callbacks == nil {
 		sm.Callbacks = make(map[string]StateCallbacks)
 	}

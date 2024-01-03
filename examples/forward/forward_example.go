@@ -10,14 +10,14 @@ import (
 	statemachine "github.com/hibrid/statemachine2"
 )
 
-type TestHandler struct {
+type Step1 struct {
 }
 
-func (handler *TestHandler) Name() string {
-	return "TestHandler" // Provide a default name for the handler
+func (handler *Step1) Name() string {
+	return "Step1 - The First Step" // Provide a default name for the handler
 }
 
-func (handler *TestHandler) ExecuteForward(data map[string]interface{}, transitionHistory []statemachine.TransitionHistory) (statemachine.ForwardEvent, map[string]interface{}, error) {
+func (handler *Step1) ExecuteForward(data map[string]interface{}, transitionHistory []statemachine.TransitionHistory) (statemachine.ForwardEvent, map[string]interface{}, error) {
 	// Access and modify arbitrary data in the handler logic
 	data["key1"] = "new value1"
 	data["key3"] = 456
@@ -26,29 +26,29 @@ func (handler *TestHandler) ExecuteForward(data map[string]interface{}, transiti
 	return statemachine.ForwardSuccess, data, nil
 }
 
-func (handler *TestHandler) ExecuteBackward(data map[string]interface{}, transitionHistory []statemachine.TransitionHistory) (statemachine.BackwardEvent, map[string]interface{}, error) {
+func (handler *Step1) ExecuteBackward(data map[string]interface{}, transitionHistory []statemachine.TransitionHistory) (statemachine.BackwardEvent, map[string]interface{}, error) {
 	// Implement backward action logic here.
 	return statemachine.BackwardSuccess, data, nil
 }
 
-func (handler *TestHandler) ExecutePause(data map[string]interface{}, transitionHistory []statemachine.TransitionHistory) (statemachine.PauseEvent, map[string]interface{}, error) {
+func (handler *Step1) ExecutePause(data map[string]interface{}, transitionHistory []statemachine.TransitionHistory) (statemachine.PauseEvent, map[string]interface{}, error) {
 	// Implement backward action logic here.
 	return statemachine.PauseSuccess, data, nil
 }
 
-func (handler *TestHandler) ExecuteResume(data map[string]interface{}, transitionHistory []statemachine.TransitionHistory) (statemachine.ResumeEvent, map[string]interface{}, error) {
+func (handler *Step1) ExecuteResume(data map[string]interface{}, transitionHistory []statemachine.TransitionHistory) (statemachine.ResumeEvent, map[string]interface{}, error) {
 	// Implement backward action logic here.
 	return statemachine.ResumeSuccess, data, nil
 }
 
-type TestHandler2 struct {
+type Step2 struct {
 }
 
-func (handler *TestHandler2) Name() string {
-	return "TestHandler2" // Provide a default name for the handler
+func (handler *Step2) Name() string {
+	return "Step 2 - The Second One" // Provide a default name for the handler
 }
 
-func (handler *TestHandler2) ExecuteForward(data map[string]interface{}, transitionHistory []statemachine.TransitionHistory) (statemachine.ForwardEvent, map[string]interface{}, error) {
+func (handler *Step2) ExecuteForward(data map[string]interface{}, transitionHistory []statemachine.TransitionHistory) (statemachine.ForwardEvent, map[string]interface{}, error) {
 	// Access and modify arbitrary data in the handler logic
 	data["key1"] = "new value2"
 	data["key3"] = 457
@@ -57,17 +57,17 @@ func (handler *TestHandler2) ExecuteForward(data map[string]interface{}, transit
 	return statemachine.ForwardSuccess, data, nil
 }
 
-func (handler *TestHandler2) ExecuteBackward(data map[string]interface{}, transitionHistory []statemachine.TransitionHistory) (statemachine.BackwardEvent, map[string]interface{}, error) {
+func (handler *Step2) ExecuteBackward(data map[string]interface{}, transitionHistory []statemachine.TransitionHistory) (statemachine.BackwardEvent, map[string]interface{}, error) {
 	// Implement backward action logic here.
 	return statemachine.BackwardSuccess, data, nil
 }
 
-func (handler *TestHandler2) ExecutePause(data map[string]interface{}, transitionHistory []statemachine.TransitionHistory) (statemachine.PauseEvent, map[string]interface{}, error) {
+func (handler *Step2) ExecutePause(data map[string]interface{}, transitionHistory []statemachine.TransitionHistory) (statemachine.PauseEvent, map[string]interface{}, error) {
 	// Implement backward action logic here.
 	return statemachine.PauseSuccess, data, nil
 }
 
-func (handler *TestHandler2) ExecuteResume(data map[string]interface{}, transitionHistory []statemachine.TransitionHistory) (statemachine.ResumeEvent, map[string]interface{}, error) {
+func (handler *Step2) ExecuteResume(data map[string]interface{}, transitionHistory []statemachine.TransitionHistory) (statemachine.ResumeEvent, map[string]interface{}, error) {
 	// Implement backward action logic here.
 	return statemachine.ResumeSuccess, data, nil
 }
@@ -119,21 +119,21 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	sm.RegisterEventCallback(statemachine.StatePending, statemachine.StateCallbacks{
-		AfterEvent: afterEventCallback,
-		EnterState: enterStateCallback,
-		LeaveState: leaveStateCallback,
+	sm.AddStateCallbacks(statemachine.StatePending, statemachine.StateCallbacks{
+		AfterAnEvent:  afterEventCallback,
+		BeforeTheStep: enterStateCallback,
+		AfterTheStep:  leaveStateCallback,
 	})
 
-	sm.RegisterEventCallback(statemachine.StateOpen, statemachine.StateCallbacks{
-		AfterEvent: afterEventCallback,
-		EnterState: enterStateCallback,
-		LeaveState: leaveStateCallback,
+	sm.AddStateCallbacks(statemachine.StateOpen, statemachine.StateCallbacks{
+		AfterAnEvent:  afterEventCallback,
+		BeforeTheStep: enterStateCallback,
+		AfterTheStep:  leaveStateCallback,
 	})
-	testHandler := &TestHandler{}
-	sm.AddHandler(testHandler, testHandler.Name())
-	testHandler2 := &TestHandler2{}
-	sm.AddHandler(testHandler2, testHandler2.Name())
+	step1Handler := &Step1{}
+	sm.AddStep(step1Handler, step1Handler.Name())
+	step2Handler := &Step2{}
+	sm.AddStep(step2Handler, step2Handler.Name())
 
 	err = sm.Run()
 	if err != nil {

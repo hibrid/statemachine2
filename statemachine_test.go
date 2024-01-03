@@ -469,7 +469,7 @@ func TestStateMachine_executeLeaveStateCallback(t *testing.T) {
 		CurrentState: StateOpen,
 		Callbacks: map[string]StateCallbacks{
 			"open": {
-				LeaveState: func(sm *StateMachine, ctx *Context) error {
+				AfterTheStep: func(sm *StateMachine, ctx *Context) error {
 					// Mock callback logic
 					return nil
 				},
@@ -639,7 +639,7 @@ func TestStateMachine_Forward_Global_Lock_Run_Integration(t *testing.T) {
 		UniqueStateMachineID: "test1",
 		LookupKey:            "5",
 		DB:                   db,
-		Handlers:             []Handler{&TestHandler{}, &TestHandler2{}},
+		Handlers:             []StepHandler{&TestHandler{}, &TestHandler2{}},
 		ExecuteSynchronously: true,
 		RetryPolicy: RetryPolicy{
 			MaxTimeout: 10 * time.Second,
@@ -768,7 +768,7 @@ func TestStateMachine_Forward_Run_Integration(t *testing.T) {
 		UniqueStateMachineID: "test1",
 		LookupKey:            "5",
 		DB:                   db,
-		Handlers:             []Handler{&TestHandler{}, &TestHandler2{}},
+		Handlers:             []StepHandler{&TestHandler{}, &TestHandler2{}},
 		ExecuteSynchronously: true,
 		RetryPolicy: RetryPolicy{
 			MaxTimeout: 10 * time.Second,
@@ -900,7 +900,7 @@ func TestStateMachine_Backward_Run_Integration(t *testing.T) {
 		UniqueStateMachineID: "test1",
 		LookupKey:            "5",
 		DB:                   db,
-		Handlers:             []Handler{&TestHandler{}, &BackwardTestHandler{}},
+		Handlers:             []StepHandler{&TestHandler{}, &BackwardTestHandler{}},
 		ExecuteSynchronously: true,
 		RetryPolicy: RetryPolicy{
 			MaxTimeout: 10 * time.Second,
@@ -1058,7 +1058,7 @@ func TestStateMachine_Forward_Retry_Run_Integration(t *testing.T) {
 		UniqueStateMachineID: "test1",
 		LookupKey:            "5",
 		DB:                   db,
-		Handlers:             []Handler{&TestHandler{}, &ForwardRetryTestHandler{}},
+		Handlers:             []StepHandler{&TestHandler{}, &ForwardRetryTestHandler{}},
 		ExecuteSynchronously: true,
 		RetryPolicy: RetryPolicy{
 			MaxTimeout: 10 * time.Second,
@@ -1221,7 +1221,7 @@ func TestStateMachine_Backward_Retry_Run_Integration(t *testing.T) {
 		UniqueStateMachineID: "test1",
 		LookupKey:            "5",
 		DB:                   db,
-		Handlers:             []Handler{&TestHandler{}, &BackwardRetryTestHandler{}},
+		Handlers:             []StepHandler{&TestHandler{}, &BackwardRetryTestHandler{}},
 		ExecuteSynchronously: true,
 		RetryPolicy: RetryPolicy{
 			MaxTimeout: 10 * time.Second,
@@ -1542,7 +1542,7 @@ func TestStateMachine_Resume(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sm := &StateMachine{CurrentState: tt.currentState, Handlers: []Handler{&TestHandler{}}}
+			sm := &StateMachine{CurrentState: tt.currentState, Handlers: []StepHandler{&TestHandler{}}}
 
 			err := sm.Resume()
 			if (err != nil) != tt.expectError {
@@ -1595,7 +1595,7 @@ func TestStateMachine_Rollback(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sm := &StateMachine{CurrentState: tt.currentState, Handlers: []Handler{&TestHandler{}}}
+			sm := &StateMachine{CurrentState: tt.currentState, Handlers: []StepHandler{&TestHandler{}}}
 
 			err := sm.Rollback()
 			if (err != nil) != tt.expectError {
