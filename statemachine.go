@@ -13,6 +13,60 @@ import (
 	"github.com/google/uuid"
 )
 
+type StateTransitionError struct {
+	StateMachineError
+	FromState State
+	ToState   State
+	Event     Event
+}
+
+func NewStateTransitionError(fromState State, toState State, event Event) *StateTransitionError {
+	return &StateTransitionError{
+		StateMachineError: StateMachineError{Msg: fmt.Sprintf("invalid state transition from %s to %s on event %s", fromState, toState, event)},
+		FromState:         fromState,
+		ToState:           toState,
+		Event:             event,
+	}
+}
+
+type DatabaseOperationError struct {
+	StateMachineError
+	Operation string
+}
+
+func NewDatabaseOperationError(operation string, err error) *DatabaseOperationError {
+	return &DatabaseOperationError{
+		StateMachineError: StateMachineError{Msg: fmt.Sprintf("database operation error in %s: %v", operation, err)},
+		Operation:         operation,
+	}
+}
+
+type LockAcquisitionError struct {
+	StateMachineError
+	LockType LockType
+	Detail   string
+}
+
+func NewLockAcquisitionError(lockType LockType, detail string, err error) *LockAcquisitionError {
+	return &LockAcquisitionError{
+		StateMachineError: StateMachineError{Msg: fmt.Sprintf("error acquiring %s lock: %s, detail: %v", lockType, detail, err)},
+		LockType:          lockType,
+		Detail:            detail,
+	}
+}
+
+type LockAlreadyHeldError struct {
+	StateMachineError
+	LockType LockType
+}
+
+func NewLockAlreadyHeldError(lockType LockType) *LockAlreadyHeldError {
+	return &LockAlreadyHeldError{
+		StateMachineError: StateMachineError{Msg: fmt.Sprintf("lock of type %s is already held by another instance", lockType)},
+		LockType:          lockType,
+	}
+}
+
 type Callback func(*StateMachine, *Context) error
 type StateCallbacks struct {
 	AfterAnEvent  Callback // callback executes immediately after the event is handled and before any state transition
@@ -599,9 +653,8 @@ func (sm *StateMachine) serializeToJSON() ([]byte, error) {
 // Save the state machine's serialized JSON to the database
 func (sm *StateMachine) saveStateToDB() error {
 	if err := updateStateMachineState(sm, sm.CurrentState); err != nil {
-		return err
+		return NewDatabaseOperationError("updateStateMachineState", err)
 	}
-
 	return nil
 }
 
@@ -616,7 +669,7 @@ func loadStateMachineFromDB(stateMachineType string, id string, db *sql.DB) (*St
 	}
 	sm, err := loadAndLockStateMachine(sm)
 	if err != nil {
-		return nil, err
+		return nil, NewDatabaseOperationError("loadAndLockStateMachine", err)
 	}
 	return sm, nil
 }
@@ -858,7 +911,7 @@ func (sm *StateMachine) determineNewState(context *Context, event Event) (State,
 	}
 
 	if !IsValidTransition(sm.CurrentState, event, newState) {
-		return StateUnknown, false, fmt.Errorf("invalid state transition from %s to %s on event %v", sm.CurrentState, newState, event)
+		return StateUnknown, false, NewStateTransitionError(sm.CurrentState, newState, event)
 	}
 
 	return newState, shouldRetry, nil
@@ -882,7 +935,7 @@ func (sm *StateMachine) checkAndAcquireLocks() error {
 func (sm *StateMachine) checkAndObtainGlobalLock() error {
 	tx, err := sm.DB.Begin()
 	if err != nil {
-		return err
+		return NewLockAcquisitionError(GlobalLock, "begin transaction", err)
 	}
 	defer tx.Rollback() // Rollback the transaction if it's not committed.
 
@@ -897,23 +950,21 @@ func (sm *StateMachine) checkAndObtainGlobalLock() error {
 		// Check if this instance owns the lock.
 		if ownedByThisInstance, err := isGlobalLockOwnedByThisInstance(tx, sm); err != nil {
 			return err
-		} else if ownedByThisInstance {
-			// This instance already owns the lock, so proceed.
-			return nil
+		} else if !ownedByThisInstance {
+			return NewLockAlreadyHeldError(GlobalLock)
 		}
-		// Another instance owns the lock; do not proceed.
-		return fmt.Errorf("another instance holds the global lock")
+		// This instance already owns the lock, so proceed.
+		return nil
 	}
 
 	// No global lock exists; attempt to obtain it.
 	if err := obtainGlobalLock(tx, sm); err != nil {
-		// Failed to obtain the global lock.
-		return err
+		return NewLockAcquisitionError(GlobalLock, "obtain global lock", err)
 	}
 
 	// Commit the transaction to confirm lock acquisition.
 	if err := tx.Commit(); err != nil {
-		return err
+		return NewLockAcquisitionError(GlobalLock, "commit transaction", err)
 	}
 
 	return nil
@@ -923,7 +974,7 @@ func (sm *StateMachine) checkAndObtainGlobalLock() error {
 func (sm *StateMachine) checkAndObtainLocalLock() error {
 	tx, err := sm.DB.Begin()
 	if err != nil {
-		return err
+		return NewLockAcquisitionError(LocalLock, "begin transaction", err)
 	}
 	defer tx.Rollback() // Rollback the transaction if it's not committed.
 
@@ -939,15 +990,14 @@ func (sm *StateMachine) checkAndObtainLocalLock() error {
 		if ownedByThisInstance, err := isGlobalLockOwnedByThisInstance(tx, sm); err != nil {
 			return err
 		} else if !ownedByThisInstance {
-			// This instance already owns the lock, so proceed.
-			return fmt.Errorf("another instance holds the global lock")
+			return NewLockAlreadyHeldError(GlobalLock)
 		}
 	}
 
 	// Check if a local lock exists for this state machine.
 	localLockExists, err := checkLocalLockExists(tx, sm)
 	if err != nil {
-		return err
+		return NewLockAcquisitionError(LocalLock, "obtain global lock", err)
 	}
 
 	if localLockExists {
@@ -955,12 +1005,11 @@ func (sm *StateMachine) checkAndObtainLocalLock() error {
 		// Check if this instance owns the lock.
 		if ownedByThisInstance, err := isLocalLockOwnedByThisInstance(tx, sm); err != nil {
 			return err
-		} else if ownedByThisInstance {
-			// This instance already owns the lock, so proceed.
-			return nil
+		} else if !ownedByThisInstance {
+			return NewLockAlreadyHeldError(LocalLock)
 		}
-		// Another instance owns the lock; do not proceed.
-		return fmt.Errorf("another instance holds the local lock")
+		// This instance already owns the lock, so proceed.
+		return nil
 	}
 
 	// No local lock exists; attempt to obtain it.
@@ -971,7 +1020,7 @@ func (sm *StateMachine) checkAndObtainLocalLock() error {
 
 	// Commit the transaction to confirm lock acquisition.
 	if err := tx.Commit(); err != nil {
-		return err
+		return NewLockAcquisitionError(LocalLock, "commit transaction", err)
 	}
 
 	return nil
@@ -1229,7 +1278,7 @@ func (sm *StateMachine) ForceState(state State) *StateMachine {
 // SetState sets the state machine's state, returning an error if the transition is invalid.
 func (sm *StateMachine) SetState(newState State, event Event) error {
 	if !IsValidTransition(sm.CurrentState, event, newState) {
-		return fmt.Errorf("invalid state transition from %s to %s on event %v", sm.CurrentState, newState, event)
+		return NewStateTransitionError(sm.CurrentState, newState, event)
 	}
 	sm.CurrentState = newState
 	return nil
@@ -1275,7 +1324,7 @@ func (sm *StateMachine) DisableSaveAfterEachStep() *StateMachine {
 func LockAndLoadStateMachine(name, id string, db *sql.DB) (*StateMachine, error) {
 	sm, err := loadStateMachineFromDB(name, id, db)
 	if err != nil {
-		return nil, err
+		return nil, NewDatabaseOperationError("loadAndLockStateMachine", err)
 	}
 
 	// Deserialize the state machine from the loaded data
@@ -1303,7 +1352,7 @@ func (sm *StateMachine) Rollback() error {
 
 	// Check if the transition from the current state with OnRollback event is valid
 	if !IsValidTransition(sm.CurrentState, OnRollback, state) {
-		return fmt.Errorf("invalid state transition from %s to %s on event %s", sm.CurrentState, StateRollback, "OnRollback")
+		return NewStateTransitionError(sm.CurrentState, state, OnRollback)
 	}
 	sm.CurrentState = StateRollback
 	return sm.Run()
@@ -1315,7 +1364,7 @@ func (sm *StateMachine) Rollback() error {
 func (sm *StateMachine) Resume() error {
 	// Check if the transition from the current state with OnResume event is valid
 	if !IsValidTransition(sm.CurrentState, OnResume, StateOpen) {
-		return fmt.Errorf("invalid state transition from %s to %s on event %s", sm.CurrentState, StateOpen, "OnResume")
+		return NewStateTransitionError(sm.CurrentState, StateOpen, OnResume)
 	}
 	sm.CurrentState = StateOpen
 	return sm.Run()
@@ -1325,7 +1374,7 @@ func (sm *StateMachine) Resume() error {
 func (sm *StateMachine) ExitParkedState(newState State) error {
 	// Validate the transition out of StateParked
 	if !IsValidTransition(StateParked, OnManualOverride, newState) {
-		return fmt.Errorf("invalid state transition from %s to %s", StateParked, newState)
+		return NewStateTransitionError(StateParked, newState, OnManualOverride)
 	}
 	sm.CurrentState = newState
 	return nil

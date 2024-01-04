@@ -1,6 +1,8 @@
 package statemachine
 
-import "errors"
+import (
+	"fmt"
+)
 
 // Context represents the context of the state machine.
 type Context struct {
@@ -15,6 +17,63 @@ type Context struct {
 	StateMachine        *StateMachine             `json:"-"`
 }
 
+// StateMachineError is a base struct for custom errors in the state machine package.
+type StateMachineError struct {
+	Msg string
+}
+
+func (e *StateMachineError) Error() string {
+	return e.Msg
+}
+
+// UnexpectedEventTypeError indicates an unexpected event type was encountered.
+type UnexpectedEventTypeError struct {
+	StateMachineError
+	EventType string
+}
+
+func NewUnexpectedEventTypeError(eventType string) *UnexpectedEventTypeError {
+	return &UnexpectedEventTypeError{
+		StateMachineError: StateMachineError{Msg: fmt.Sprintf("unexpected event type: %s", eventType)},
+		EventType:         eventType,
+	}
+}
+
+// RestartExecutionError indicates an error in restarting execution from a terminal state.
+type RestartExecutionError struct {
+	StateMachineError
+	State State
+}
+
+func NewRestartExecutionError(state State) *RestartExecutionError {
+	return &RestartExecutionError{
+		StateMachineError: StateMachineError{Msg: fmt.Sprintf("cannot restart execution from terminal state: %s", state.String())},
+		State:             state,
+	}
+}
+
+// ExecutionActionError indicates an error in determining the execution action.
+type ExecutionActionError struct {
+	StateMachineError
+}
+
+func NewExecutionActionError(msg string) *ExecutionActionError {
+	return &ExecutionActionError{
+		StateMachineError: StateMachineError{Msg: fmt.Sprintf("Execution Action Error: %s", msg)},
+	}
+}
+
+// HandlingContextError indicates an error in handling the context.
+type HandlingContextError struct {
+	StateMachineError
+}
+
+func NewHandlingContextError(msg string) *HandlingContextError {
+	return &HandlingContextError{
+		StateMachineError: StateMachineError{Msg: fmt.Sprintf("Handling Context Error: %s", msg)},
+	}
+}
+
 func (smCtx *Context) finishHandlingContext(event Event, input, output map[string]interface{}) error {
 	smCtx.EventEmitted = event
 	smCtx.InputArbitraryData = input
@@ -23,7 +82,7 @@ func (smCtx *Context) finishHandlingContext(event Event, input, output map[strin
 	if callbacks, ok := smCtx.Callbacks[smCtx.InputState.String()]; ok {
 		cb := callbacks.AfterAnEvent
 		if err := cb(smCtx.StateMachine, smCtx); err != nil {
-			return err // OnError is a hypothetical event representing an error state
+			return err
 		}
 	}
 	return nil
@@ -78,8 +137,7 @@ func DetermineExecutionAction(inputArbitraryData map[string]interface{}, smCtx *
 			// Convert it to a generic event
 			convertedEvent = forwardEvent.ToEvent()
 		} else {
-			// Handle the error or unexpected type
-			return OnError, errors.New("unexpected event type")
+			return OnError, NewUnexpectedEventTypeError(fmt.Sprintf("%T", executionEvent))
 		}
 	case StatePaused:
 		executionEvent, outputData, err = smCtx.Handler.ExecutePause(inputArbitraryData, smCtx.TransitionHistory)
@@ -90,7 +148,7 @@ func DetermineExecutionAction(inputArbitraryData map[string]interface{}, smCtx *
 			convertedEvent = pauseEvent.ToEvent()
 		} else {
 			// Handle the error or unexpected type
-			return OnError, errors.New("unexpected event type")
+			return OnError, NewUnexpectedEventTypeError(fmt.Sprintf("%T", executionEvent))
 		}
 	case StateRollback:
 		executionEvent, outputData, err = smCtx.Handler.ExecuteBackward(inputArbitraryData, smCtx.TransitionHistory)
@@ -101,7 +159,7 @@ func DetermineExecutionAction(inputArbitraryData map[string]interface{}, smCtx *
 			convertedEvent = backwardEvent.ToEvent()
 		} else {
 			// Handle the error or unexpected type
-			return OnError, errors.New("unexpected event type")
+			return OnError, NewUnexpectedEventTypeError(fmt.Sprintf("%T", executionEvent))
 		}
 	case StateResume:
 		executionEvent, outputData, err = smCtx.Handler.ExecuteResume(inputArbitraryData, smCtx.TransitionHistory)
@@ -112,7 +170,7 @@ func DetermineExecutionAction(inputArbitraryData map[string]interface{}, smCtx *
 			convertedEvent = resumeEvent.ToEvent()
 		} else {
 			// Handle the error or unexpected type
-			return OnError, errors.New("unexpected event type")
+			return OnError, NewUnexpectedEventTypeError(fmt.Sprintf("%T", executionEvent))
 		}
 
 	default: // not sure what happened so let's park it
@@ -138,7 +196,7 @@ func restartExecutionFromState(state State, smCtx *Context) (Event, error) {
 		return executionEvent.ToEvent(), err
 	default:
 		if IsTerminalState(state) {
-			return DetermineTerminalStateEvent(smCtx), errors.New("cannot restart execution from terminal state")
+			return DetermineTerminalStateEvent(smCtx), NewRestartExecutionError(state)
 		}
 		return OnFailed, nil
 	}
@@ -168,13 +226,25 @@ func (smCtx *Context) Handle() (executionEvent Event, err error) {
 	outputArbitraryData := inputArbitraryData
 
 	defer func() {
-		err = smCtx.finishHandlingContext(executionEvent, smCtx.InputArbitraryData, outputArbitraryData)
-		if err != nil {
+		if r := recover(); r != nil {
+			// Convert the panic to an error and wrap it
+			err = fmt.Errorf("panic occurred in Handle: %v", r)
+			executionEvent = OnError
+		}
+
+		if finishErr := smCtx.finishHandlingContext(executionEvent, smCtx.InputArbitraryData, outputArbitraryData); finishErr != nil {
+			// Wrap the error from finishHandlingContext with custom error type
+			err = NewHandlingContextError(finishErr.Error())
 			executionEvent = OnError
 		}
 	}()
 
 	executionEvent, err = DetermineExecutionAction(inputArbitraryData, smCtx)
+	if err != nil {
+		// Wrap the error from DetermineExecutionAction with custom error type
+		err = NewExecutionActionError(err.Error())
+		return executionEvent, err
+	}
 	outputArbitraryData = CopyMap(smCtx.OutputArbitraryData)
 
 	return executionEvent, err
