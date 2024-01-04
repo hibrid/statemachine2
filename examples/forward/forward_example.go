@@ -110,7 +110,7 @@ func main() {
 		LookupKey:            "5",
 		DB:                   db,
 		Handlers:             nil,
-		ExecuteSynchronously: true,
+		ExecuteSynchronously: true, // Will execute the state machine steps synchronously using recursion and will block until the state machine completes
 		RetryPolicy:          retryPolicy,
 		LockType:             statemachine.LocalLock,
 	}
@@ -138,6 +138,26 @@ func main() {
 	err = sm.Run()
 	if err != nil {
 		panic(err)
+	}
+
+	if !sm.DidStateMachineComplete() {
+		if sm.DidStateMachineFail() {
+			fmt.Println("State machine failed")
+		}
+
+		if sm.DidStateMachineRollback() {
+			fmt.Println("State machine rolled back")
+		}
+
+		if sm.DidStateMachinePause() {
+			fmt.Println("State machine paused")
+		}
+
+		if sm.IsTheStateMachineInATerminalState() {
+			fmt.Println("State machine is in a terminal state")
+		}
+	} else if sm.DidStateMachineComplete() {
+		fmt.Println("State machine completed successfully")
 	}
 
 }

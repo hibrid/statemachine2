@@ -1119,6 +1119,83 @@ func NewStateMachine(config StateMachineConfig) (*StateMachine, error) {
 	return sm, nil
 }
 
+// GetCurrentArbitraryData returns the current arbitrary data associated with the state machine.
+// This explicitly returns a copy of the map to avoid referencing the same space in memory as we manipulate the data
+func (sm *StateMachine) GetCurrentArbitraryData() map[string]interface{} {
+	return CopyMap(sm.CurrentArbitraryData)
+}
+
+// GetHistory returns the history of executed transitions.
+func (sm *StateMachine) GetHistory() []TransitionHistory {
+	return sm.History
+}
+
+// GetState returns the current state of the state machine.
+func (sm *StateMachine) GetState() State {
+	return sm.CurrentState
+}
+
+// DidStateMachineComplete returns true if the state machine completed successfully.
+func (sm *StateMachine) DidStateMachineComplete() bool {
+	return sm.CurrentState == StateCompleted
+}
+
+// DidStateMachineFail returns true if the state machine failed.
+func (sm *StateMachine) DidStateMachineFail() bool {
+	return sm.CurrentState == StateFailed
+}
+
+// DidStateMachineRollbackFail returns true if the state machine failed to rollback.
+func (sm *StateMachine) DidStateMachineRollback() bool {
+	return sm.CurrentState == StateRollbackCompleted
+}
+
+// DidStateMachineRollbackFail returns true if the state machine failed to rollback.
+func (sm *StateMachine) DidStateMachineRollbackFail() bool {
+	return sm.CurrentState == StateRollbackFailed
+}
+
+// DidStateMachineCancel returns true if the state machine was cancelled.
+func (sm *StateMachine) DidStateMachineCancel() bool {
+	return sm.CurrentState == StateCancelled
+}
+
+// DidStateMachinePause returns true if the state machine was paused.
+func (sm *StateMachine) DidStateMachinePause() bool {
+	return sm.CurrentState == StatePaused
+}
+
+// DidStateMachinePark returns true if the state machine was parked.
+func (sm *StateMachine) DidStateMachinePark() bool {
+	return sm.CurrentState == StateParked
+}
+
+// DidStateMachineRetry returns true if a step in the state machine will be retried.
+func (sm *StateMachine) DidStateMachineRetry() bool {
+	return sm.CurrentState == StateRetry
+}
+
+// DidStateMachineRetryFail returns true if a step in the state machine failed to retry.
+func (sm *StateMachine) DidStateMachineRetryFail() bool {
+	return sm.CurrentState == StateRetryFailed
+}
+
+// GetRetryCount returns the number of times the state machine has retried.
+func (sm *StateMachine) GetRetryCount() int {
+	return sm.RetryCount
+}
+
+// GetLastRetryTime returns the time of the last retry.
+func (sm *StateMachine) GetLastRetryTime() time.Time {
+	return *sm.LastRetry
+}
+
+// IsTheStateMachineInATerminalState returns true if the state machine is in a terminal state.
+// A terminal state is a state where the state machine stops processing.
+func (sm *StateMachine) IsTheStateMachineInATerminalState() bool {
+	return IsTerminalState(sm.CurrentState)
+}
+
 // GenerateAndSetUniqueID generates a unique ID for the StateMachine and updates the UniqueID field.
 func (sm *StateMachine) GenerateAndSetUniqueID() string {
 	// Generate a unique ID (e.g., UUID)
