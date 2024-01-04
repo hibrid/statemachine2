@@ -19,8 +19,8 @@ func (handler *Step1) Name() string {
 
 func (handler *Step1) ExecuteForward(data map[string]interface{}, transitionHistory []statemachine.TransitionHistory) (statemachine.ForwardEvent, map[string]interface{}, error) {
 	// Access and modify arbitrary data in the handler logic
-	data["key1"] = "new value1"
-	data["key3"] = 456
+	data["RemoteID"] = "externalidentifier"
+	data["Provider"] = "someprovider"
 
 	// Return the modified data
 	return statemachine.ForwardSuccess, data, nil
@@ -50,8 +50,7 @@ func (handler *Step2) Name() string {
 
 func (handler *Step2) ExecuteForward(data map[string]interface{}, transitionHistory []statemachine.TransitionHistory) (statemachine.ForwardEvent, map[string]interface{}, error) {
 	// Access and modify arbitrary data in the handler logic
-	data["key1"] = "new value2"
-	data["key3"] = 457
+	data["IpAddress"] = "192.168.0.1"
 
 	// Return the modified data
 	return statemachine.ForwardSuccess, data, nil
@@ -158,6 +157,8 @@ func main() {
 		}
 	} else if sm.DidStateMachineComplete() {
 		fmt.Println("State machine completed successfully")
+		ipAddress := sm.GetCurrentArbitraryData()["IpAddress"]
+		fmt.Println("The IP Address Assigned is: ", ipAddress.(string))
 	}
 
 }
