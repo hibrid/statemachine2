@@ -589,7 +589,12 @@ func createStateMachineLockTableIfNotExistsSQL() string {
 		StateMachineType VARCHAR(255),
 		LockType VARCHAR(50),
 		StartTimestamp TIMESTAMP NULL,
-		EndTimestamp TIMESTAMP NULL
+		EndTimestamp TIMESTAMP NULL,
+		RecurInterval VARCHAR(10), -- 'None', 'Daily', 'Weekly', 'Monthly'
+		DayOfWeek INT NULL, -- 1 = Monday, 7 = Sunday, used for weekly recurrence
+		DayOfMonth INT NULL, -- 1-31, used for monthly recurrence
+		RecurStartTime TIME NULL,
+		RecurEndTime TIME NULL
 	);`
 }
 
@@ -602,23 +607,17 @@ func CreateStateMachineLockTableIfNotExists(db *sql.DB) error {
 	return nil
 }
 
-type StateMachineTypeLockInfo struct {
-	Type  MachineLockType
-	Start time.Time
-	End   time.Time
-}
-
 func checkStateMachineTypeLockSQL() string {
-	return `SELECT LockType, StartTimestamp, EndTimestamp 
-			  FROM STATE_MACHINE_TYPE_LOCK 
-			  WHERE StateMachineType = ? AND StartTimestamp <= ? AND EndTimestamp >= ?
-			  ORDER BY StartTimestamp ASC`
+	return `SELECT LockType, StartTimestamp, EndTimestamp, RecurInterval, DayOfWeek, DayOfMonth, RecurStartTime, RecurEndTime 
+	FROM STATE_MACHINE_TYPE_LOCK 
+	WHERE StateMachineType = ? AND StartTimestamp <= ? AND EndTimestamp >= ?
+	ORDER BY StartTimestamp ASC`
 }
 
 func checkStateMachineTypeLock(db *sql.DB, stateMachineType string, queryTime time.Time) ([]StateMachineTypeLockInfo, error) {
 	var locks []StateMachineTypeLockInfo
 
-	rows, err := db.Query(checkStateMachineTypeLockSQL(), stateMachineType, queryTime.UTC(), queryTime.UTC())
+	rows, err := db.Query(checkStateMachineTypeLockSQL(), stateMachineType, &queryTime, &queryTime)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return locks, nil
@@ -628,36 +627,40 @@ func checkStateMachineTypeLock(db *sql.DB, stateMachineType string, queryTime ti
 	defer rows.Close()
 
 	for rows.Next() {
-		var lockTypeStr string
-		var startTimestampStr, endTimestampStr sql.NullString
+		var lockTypeStr, recurInterval string
 		var startTimestamp, endTimestamp time.Time
+		var dayOfWeek, dayOfMonth int
+		var recurStartTime, recurEndTime time.Time
 
-		if err := rows.Scan(&lockTypeStr, &startTimestampStr, &endTimestampStr); err != nil {
+		if err := rows.Scan(&lockTypeStr, &startTimestamp, &endTimestamp, &recurInterval, &dayOfWeek, &dayOfMonth, &recurStartTime, &recurEndTime); err != nil {
 			return nil, err
-		}
-
-		if startTimestampStr.Valid {
-			startTimestamp, err = parseTimestamp(startTimestampStr.String)
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		if endTimestampStr.Valid {
-			endTimestamp, err = parseTimestamp(endTimestampStr.String)
-			if err != nil {
-				return nil, err
-			}
 		}
 
 		lockType := ParseMachineLockType(lockTypeStr)
 
-		locks = append(locks, StateMachineTypeLockInfo{
-			Type:  lockType,
-			Start: startTimestamp,
-			End:   endTimestamp,
-		})
+		lockInfo := StateMachineTypeLockInfo{
+			StateMachineType: stateMachineType,
+			Type:             lockType,
+			Start:            startTimestamp,
+			End:              endTimestamp,
+			RecurInterval:    recurInterval,
+			DayOfWeek:        dayOfWeek,
+			DayOfMonth:       dayOfMonth,
+			RecurStartTime:   recurStartTime,
+			RecurEndTime:     recurEndTime,
+		}
 
+		if recurInterval != "None" {
+			// Logic to check if the current time falls within the recurring schedule
+			if isWithinRecurringSchedule(recurInterval, dayOfWeek, dayOfMonth, recurStartTime, recurEndTime, queryTime) {
+				locks = append(locks, lockInfo)
+			}
+		} else {
+			// Check for one-time lock
+			if queryTime.After(startTimestamp) && queryTime.Before(endTimestamp) {
+				locks = append(locks, lockInfo)
+			}
+		}
 	}
 
 	if err := rows.Err(); err != nil {
@@ -665,4 +668,37 @@ func checkStateMachineTypeLock(db *sql.DB, stateMachineType string, queryTime ti
 	}
 
 	return locks, nil
+}
+
+// SQL Queries as separate functions
+func createLockQuery() string {
+	return `INSERT INTO STATE_MACHINE_TYPE_LOCK 
+            (StateMachineType, LockType, StartTimestamp, EndTimestamp, RecurInterval, DayOfWeek, DayOfMonth, RecurStartTime, RecurEndTime) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+}
+
+func updateLockQuery() string {
+	return `UPDATE STATE_MACHINE_TYPE_LOCK 
+            SET LockType = ?, StartTimestamp = ?, EndTimestamp = ?, RecurInterval = ?, DayOfWeek = ?, DayOfMonth = ?, RecurStartTime = ?, RecurEndTime = ? 
+            WHERE StateMachineType = ?`
+}
+
+func deleteLockQuery() string {
+	return `DELETE FROM STATE_MACHINE_TYPE_LOCK WHERE StateMachineType = ? AND LockType = ?`
+}
+
+// Database functions using the query functions
+func createLock(db *sql.DB, lock StateMachineTypeLockInfo) error {
+	_, err := db.Exec(createLockQuery(), lock.StateMachineType, lock.Type, lock.Start.UTC(), lock.End.UTC(), lock.RecurInterval, lock.DayOfWeek, lock.DayOfMonth, lock.RecurStartTime.UTC(), lock.RecurEndTime.UTC())
+	return err
+}
+
+func updateLock(db *sql.DB, lock StateMachineTypeLockInfo) error {
+	_, err := db.Exec(updateLockQuery(), lock.Type, lock.Start.UTC(), lock.End.UTC(), lock.RecurInterval, lock.DayOfWeek, lock.DayOfMonth, lock.RecurStartTime.UTC(), lock.RecurEndTime.UTC(), lock.StateMachineType)
+	return err
+}
+
+func deleteLock(db *sql.DB, stateMachineType string, lockType MachineLockType) error {
+	_, err := db.Exec(deleteLockQuery(), stateMachineType, lockType)
+	return err
 }

@@ -953,10 +953,14 @@ func TestStateMachine_Machine_Lock_Sleep_Integration(t *testing.T) {
 	mock.ExpectExec(escapeRegexChars(createStateMachineLockTableIfNotExistsSQL())).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
+	queryTime := time.Now()
+
+	rows := sqlmock.NewRows([]string{"LockType", "StartTimestamp", "EndTimestamp", "RecurInterval", "DayOfWeek", "DayOfMonth", "RecurStartTime", "RecurEndTime"}).
+		AddRow(MachineLockTypeSleepState, queryTime.Add(-time.Hour), queryTime.Add(time.Hour), "None", 0, 0, queryTime.Add(-time.Hour), queryTime.Add(time.Hour)) // Matches
+
 	mock.ExpectQuery(escapeRegexChars(checkStateMachineTypeLockSQL())).
 		WithArgs(config.Name, sqlmock.AnyArg(), sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"LockType", "StartTimestamp", "EndTimestamp"}).
-			AddRow("SleepState", "2009-05-18 22:11:11", "2009-05-19 22:11:11"))
+		WillReturnRows(rows)
 
 	var usesGlobalLock, usesLocalLock bool
 	if config.LockType == GlobalLock {
