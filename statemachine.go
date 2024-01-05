@@ -13,466 +13,12 @@ import (
 	"github.com/google/uuid"
 )
 
-type StateTransitionError struct {
-	StateMachineError
-	FromState State
-	ToState   State
-	Event     Event
-}
-
-func NewStateTransitionError(fromState State, toState State, event Event) *StateTransitionError {
-	return &StateTransitionError{
-		StateMachineError: StateMachineError{Msg: fmt.Sprintf("invalid state transition from %s to %s on event %s", fromState, toState, event)},
-		FromState:         fromState,
-		ToState:           toState,
-		Event:             event,
-	}
-}
-
-type DatabaseOperationError struct {
-	StateMachineError
-	Operation string
-}
-
-func NewDatabaseOperationError(operation string, err error) *DatabaseOperationError {
-	return &DatabaseOperationError{
-		StateMachineError: StateMachineError{Msg: fmt.Sprintf("database operation error in %s: %v", operation, err)},
-		Operation:         operation,
-	}
-}
-
-type LockAcquisitionError struct {
-	StateMachineError
-	LockType LockType
-	Detail   string
-}
-
-func NewLockAcquisitionError(lockType LockType, detail string, err error) *LockAcquisitionError {
-	return &LockAcquisitionError{
-		StateMachineError: StateMachineError{Msg: fmt.Sprintf("error acquiring %s lock: %s, detail: %v", lockType, detail, err)},
-		LockType:          lockType,
-		Detail:            detail,
-	}
-}
-
-type LockAlreadyHeldError struct {
-	StateMachineError
-	LockType LockType
-}
-
-func NewLockAlreadyHeldError(lockType LockType) *LockAlreadyHeldError {
-	return &LockAlreadyHeldError{
-		StateMachineError: StateMachineError{Msg: fmt.Sprintf("lock of type %s is already held by another instance", lockType)},
-		LockType:          lockType,
-	}
-}
-
 type Callback func(*StateMachine, *Context) error
 type StateCallbacks struct {
 	AfterAnEvent  Callback // callback executes immediately after the event is handled and before any state transition
 	BeforeTheStep Callback // callback executes immediately after the state transition
 	AfterTheStep  Callback // callback executes immediately before the state transition
 }
-
-type ForwardEvent int
-
-const (
-	ForwardSuccess ForwardEvent = iota
-	ForwardFail
-	ForwardComplete
-	ForwardPause
-	ForwardRollback
-	ForwardRetry
-	ForwardLock
-	ForwardCancel
-	ForwardUnknown
-)
-
-func (e ForwardEvent) String() string {
-	switch e {
-	case ForwardSuccess:
-		return "ForwardSuccess"
-	case ForwardFail:
-		return "ForwardFail"
-	case ForwardComplete:
-		return "ForwardComplete"
-	case ForwardPause:
-		return "ForwardPause"
-	case ForwardRollback:
-		return "ForwardRollback"
-	case ForwardRetry:
-		return "ForwardRetry"
-	case ForwardLock:
-		return "ForwardLock"
-	case ForwardCancel:
-		return "ForwardCancel"
-	default:
-		return fmt.Sprintf("UnknownForwardEvent(%d)", e)
-	}
-}
-
-// convert the ForwardEvent to a Event
-func (e ForwardEvent) ToEvent() Event {
-	switch e {
-	case ForwardSuccess:
-		return OnSuccess
-	case ForwardFail:
-		return OnFailed
-	case ForwardComplete:
-		return OnCompleted
-	case ForwardPause:
-		return OnPause
-	case ForwardRollback:
-		return OnRollback
-	case ForwardRetry:
-		return OnRetry
-	case ForwardLock:
-		return OnLock
-	case ForwardCancel:
-		return OnCancelled
-	default:
-		return OnUnknownSituation
-	}
-}
-
-type BackwardEvent int
-
-const (
-	BackwardSuccess BackwardEvent = iota
-	BackwardComplete
-	BackwardFail
-	BackwardRollback
-	BackwardCancel
-	BackwardRetry
-	BackwardUnknown
-)
-
-func (e BackwardEvent) String() string {
-	switch e {
-	case BackwardSuccess:
-		return "BackwardSuccess"
-	case BackwardComplete:
-		return "BackwardComplete"
-	case BackwardFail:
-		return "BackwardFail"
-	case BackwardRollback:
-		return "BackwardRollback"
-	case BackwardCancel:
-		return "BackwardCancel"
-	case BackwardRetry:
-		return "BackwardRetry"
-	default:
-		return fmt.Sprintf("UnknownBackwardEvent(%d)", e)
-	}
-}
-
-// convert the BackwardEvent to a Event
-func (e BackwardEvent) ToEvent() Event {
-	switch e {
-	case BackwardSuccess:
-		return OnRollback
-	case BackwardComplete:
-		return OnRollbackCompleted
-	case BackwardFail:
-		return OnFailed
-	case BackwardRollback:
-		return OnRollback
-	case BackwardCancel:
-		return OnCancelled
-	case BackwardRetry:
-		return OnRetry
-	default:
-		return OnUnknownSituation
-	}
-}
-
-type PauseEvent int
-
-const (
-	PauseSuccess PauseEvent = iota
-	PauseFail
-	PauseUnknown
-)
-
-func (e PauseEvent) String() string {
-	switch e {
-	case PauseSuccess:
-		return "PauseSuccess"
-	case PauseFail:
-		return "PauseFail"
-	default:
-		return fmt.Sprintf("UnknownPauseEvent(%d)", e)
-	}
-}
-
-// convert the PauseEvent to a Event
-func (e PauseEvent) ToEvent() Event {
-	switch e {
-	case PauseSuccess:
-		return OnPause
-	case PauseFail:
-		return OnFailed
-	default:
-		return OnUnknownSituation
-	}
-}
-
-type RetryEvent int
-
-const (
-	RetrySuccess RetryEvent = iota
-	RetryFail
-	RetryRetry
-	RetryLock
-	RetryCancel
-	RetryResetTimeout
-	RetryUnknown
-)
-
-func (e RetryEvent) String() string {
-	switch e {
-	case RetrySuccess:
-		return "RetrySuccess"
-	case RetryFail:
-		return "RetryFail"
-	case RetryRetry:
-		return "RetryRetry"
-	case RetryLock:
-		return "RetryLock"
-	case RetryCancel:
-		return "RetryCancel"
-	case RetryResetTimeout:
-		return "RetryResetTimeout"
-	default:
-		return fmt.Sprintf("UnknownRetryEvent(%d)", e)
-	}
-}
-
-// convert the RetryEvent to a Event
-func (e RetryEvent) ToEvent() Event {
-	switch e {
-	case RetrySuccess:
-		return OnSuccess
-	case RetryFail:
-		return OnFailed
-	case RetryRetry:
-		return OnRetry
-	case RetryLock:
-		return OnLock
-	case RetryCancel:
-		return OnCancelled
-	case RetryResetTimeout:
-		return OnResetTimeout
-	default:
-		return OnUnknownSituation
-	}
-}
-
-type ManualOverrideEvent int
-
-const (
-	ManualOverrideAny ManualOverrideEvent = iota
-	ManualOverrideUnknown
-)
-
-func (e ManualOverrideEvent) String() string {
-	switch e {
-	case ManualOverrideAny:
-		return "ManualOverrideAny"
-	default:
-		return fmt.Sprintf("UnknownManualOverrideEvent(%d)", e)
-	}
-}
-
-// convert the ManualOverrideEvent to a Event
-func (e ManualOverrideEvent) ToEvent() Event {
-	switch e {
-	case ManualOverrideAny:
-		return OnManualOverride
-	default:
-		return OnUnknownSituation
-	}
-}
-
-type ResumeEvent int
-
-const (
-	ResumeSuccess ResumeEvent = iota
-	ResumeFail
-)
-
-func (e ResumeEvent) String() string {
-	switch e {
-	case ResumeSuccess:
-		return "ResumeSuccess"
-	case ResumeFail:
-		return "ResumeFail"
-	default:
-		return fmt.Sprintf("UnknownResumeEvent(%d)", e)
-	}
-}
-
-// convert the ResumeEvent to a Event
-func (e ResumeEvent) ToEvent() Event {
-	switch e {
-	case ResumeSuccess:
-		return OnSuccess
-	case ResumeFail:
-		return OnFailed
-	default:
-		return OnUnknownSituation
-	}
-}
-
-// Event represents an event that triggers state transitions.
-type Event int
-
-const (
-	OnSuccess Event = iota
-	OnFailed
-	OnAlreadyCompleted
-	OnPause
-	OnResume
-	OnRollback
-	OnRetry
-	OnResetTimeout
-	OnUnknownSituation
-	OnManualOverride
-	OnError
-	OnBeforeEvent
-	OnAfterEvent
-	OnCompleted
-	OnRollbackCompleted
-	OnAlreadyRollbackCompleted
-	OnRollbackFailed
-	OnCancelled
-	OnParked
-	OnLock
-)
-
-func (e Event) String() string {
-	switch e {
-	case OnSuccess:
-		return "OnSuccess"
-	case OnFailed:
-		return "OnFailed"
-	case OnAlreadyCompleted:
-		return "OnAlreadyCompleted"
-	case OnPause:
-		return "OnPause"
-	case OnResume:
-		return "OnResume"
-	case OnRollback:
-		return "OnRollback"
-	case OnRetry:
-		return "OnRetry"
-	case OnResetTimeout:
-		return "OnResetTimeout"
-	case OnUnknownSituation:
-		return "OnUnknownSituation"
-	case OnManualOverride:
-		return "OnManualOverride"
-	case OnError:
-		return "OnError"
-	case OnBeforeEvent:
-		return "OnBeforeEvent"
-	case OnAfterEvent:
-		return "OnAfterEvent"
-	case OnCompleted:
-		return "OnCompleted"
-	case OnRollbackCompleted:
-		return "OnRollbackCompleted"
-	case OnAlreadyRollbackCompleted:
-		return "OnAlreadyRollbackCompleted"
-	case OnRollbackFailed:
-		return "OnRollbackFailed"
-	case OnCancelled:
-		return "OnCancelled"
-	case OnParked:
-		return "OnParked"
-	case OnLock:
-		return "OnLock"
-	default:
-		return fmt.Sprintf("UnknownEvent(%d)", e)
-	}
-}
-
-type State string
-
-func (s State) String() string {
-	return string(s)
-}
-
-const (
-
-	// StatePending is the initial state of a state machine waiting to be picked up.
-	// ExecuteForward
-	StatePending State = "pending"
-
-	// StateOpen is the state of a state machine when it is in progress and not locked.
-	// ExecuteForward
-	StateOpen State = "open"
-
-	// StateInProgress is the state of a state machine when it is in progress and locked.
-	// ExecuteForward
-	StateInProgress State = "in_progress"
-
-	// StateCompleted is the final state of a state machine.
-	// AlreadyCompleted - No action
-	StateCompleted State = "completed"
-
-	// StateFailed is the state of a state machine when it fails.
-	// AlreadyFailed - No action
-	StateFailed State = "failed"
-
-	// StateRetry is the state of a state machine when it needs to retry later.
-	StateRetry State = "retry"
-
-	// StateRetryStart is the state of a state machine when it needs to retry later.
-	// ExecuteForward and change state in machine to StateRetry
-	StateRetryStart State = "start_retry"
-
-	// StateRetryFailed is the state of a state machine when its retry fails.
-	StateRetryFailed State = "retry_failed"
-
-	// StateFailed is the state of a state machine when it fails.
-	// ExecuteBackward
-	StateRollback State = "rollback"
-
-	// We are going to start the rollback process
-	// ExecuteBackward and change state in machine to StateRollback
-	StateStartRollback State = "start_rollback"
-
-	// StateRollbackFailed is the state of a state machine when its rollback fails.
-	// AlreadyRollbackFailed - No action
-	StateRollbackFailed State = "rollback_failed"
-
-	// StateRollbackCompleted is the state of a state machine when its rollback is completed.
-	// AlreadyRollbackCompleted - No action
-	StateRollbackCompleted State = "rollback_completed"
-
-	// StatePaused is the state of a state machine when it is paused.
-	// ExecutePause
-	StatePaused State = "paused"
-
-	// StatePaused is the state of a state machine when it is paused.
-	// ExecuteResume
-	StateResume State = "resume"
-
-	// StateCancelled is the state of a state machine when it is cancelled.
-	// AlreadyCancelled - No action
-	StateCancelled State = "cancelled"
-
-	// StateParked is the state of a state machine when it is parked because we don't know what to do with it.
-	// AlreadyParked - No Action
-	StateParked State = "parked"
-
-	// StateUnknown is the state of a state machine when it is in an unknown state.
-	StateUnknown State = "unknown"
-
-	// AnyState is a special state that can be used to indicate that a transition can happen from any state.
-	AnyState State = "any"
-)
 
 // StateMachine represents a state machine instance.
 type StateMachine struct {
@@ -502,27 +48,8 @@ type StateMachine struct {
 	BaseDelay            time.Duration          `json:"baseDelay"`
 	LastRetry            *time.Time             `json:"lastRetry"`
 	SerializedState      []byte                 `json:"-"`
-}
 
-type LockType int
-
-const (
-	NoLock LockType = iota
-	GlobalLock
-	LocalLock
-)
-
-func (lt LockType) String() string {
-	switch lt {
-	case NoLock:
-		return "NoLock"
-	case GlobalLock:
-		return "GlobalLock"
-	case LocalLock:
-		return "LocalLock"
-	default:
-		return fmt.Sprintf("UnknownLockType(%d)", lt)
-	}
+	MachineLockInfo *StateMachineTypeLockInfo `json:"-"`
 }
 
 type RetryType string
@@ -550,106 +77,6 @@ type StateMachineConfig struct {
 	LockType             LockType
 }
 
-// TransitionHistory stores information about executed transitions.
-type TransitionHistory struct {
-	FromStep            int                    `json:"fromStep"`            // Index of the "from" step
-	ToStep              int                    `json:"toStep"`              // Index of the "to" step
-	HandlerName         string                 `json:"handlerName"`         // Name of the handler
-	InitialState        State                  `json:"initialState"`        // Initial state
-	ModifiedState       State                  `json:"modifiedState"`       // Modified state
-	InputArbitraryData  map[string]interface{} `json:"inputArbitraryData"`  // Arbitrary data associated with the transition
-	OutputArbitraryData map[string]interface{} `json:"outputArbitraryData"` // Arbitrary data associated with the transition
-	EventEmitted        Event                  `json:"eventEmitted"`        // Event emitted by the transition
-}
-
-// StepHandler defines the interface for state machine handlers.
-type StepHandler interface {
-	Name() string
-	ExecuteForward(data map[string]interface{}, transitionHistory []TransitionHistory) (ForwardEvent, map[string]interface{}, error)
-	ExecuteBackward(data map[string]interface{}, transitionHistory []TransitionHistory) (BackwardEvent, map[string]interface{}, error)
-	ExecutePause(data map[string]interface{}, transitionHistory []TransitionHistory) (PauseEvent, map[string]interface{}, error)
-	ExecuteResume(data map[string]interface{}, transitionHistory []TransitionHistory) (ResumeEvent, map[string]interface{}, error)
-}
-
-// TerminalStates defines the states where the state machine stops processing.
-var TerminalStates = map[State]bool{
-	StateCompleted:         true,
-	StateFailed:            true,
-	StateRollbackCompleted: true,
-	StateCancelled:         true,
-}
-
-// IsTerminalState checks if the given state is a terminal state.
-func IsTerminalState(state State) bool {
-	_, isTerminal := TerminalStates[state]
-	return isTerminal
-}
-
-var ValidTransitions = map[State]map[Event][]State{
-	StatePending: {
-		OnSuccess:   []State{StateOpen},
-		OnFailed:    []State{StateFailed},
-		OnCancelled: []State{StateCancelled},
-
-		OnUnknownSituation: []State{StateParked},
-	},
-	StateOpen: {
-		OnSuccess:   []State{StateOpen},
-		OnCompleted: []State{StateCompleted},
-		OnFailed:    []State{StateFailed},
-		OnPause:     []State{StatePaused},
-		OnRollback:  []State{StateStartRollback},
-		OnRetry:     []State{StateRetry, StateRetryStart},
-		OnLock:      []State{StateInProgress},
-		OnCancelled: []State{StateCancelled},
-
-		OnUnknownSituation: []State{StateParked},
-	},
-	StateRetry: {
-		OnSuccess:      []State{StateOpen},
-		OnFailed:       []State{StateFailed},
-		OnRetry:        []State{StateRetry},
-		OnLock:         []State{StateInProgress},
-		OnCancelled:    []State{StateCancelled},
-		OnResetTimeout: []State{StateFailed},
-
-		OnUnknownSituation: []State{StateParked},
-	},
-	StateRollback: {
-		OnSuccess:           []State{StateOpen},
-		OnRetry:             []State{StateRetry, StateRetryStart},
-		OnRollbackCompleted: []State{StateRollbackCompleted},
-		OnRollbackFailed:    []State{StateRollbackFailed},
-		OnRollback:          []State{StateRollback},
-		OnCancelled:         []State{StateCancelled},
-
-		OnUnknownSituation: []State{StateParked},
-	},
-	StatePaused: {
-		OnResume: []State{StateOpen},
-		OnFailed: []State{StateFailed},
-	},
-	StateParked: {
-		OnManualOverride: []State{AnyState},
-	},
-}
-
-func deserializeFromJSON(data []byte) (map[string]interface{}, error) {
-	var mapData map[string]interface{}
-	if err := json.Unmarshal(data, &mapData); err != nil {
-		return nil, err
-	}
-	return mapData, nil
-}
-
-func (sm *StateMachine) serializeToJSON() ([]byte, error) {
-	serialized, err := json.Marshal(sm)
-	if err != nil {
-		return nil, err
-	}
-	return serialized, nil
-}
-
 // Save the state machine's serialized JSON to the database
 func (sm *StateMachine) saveStateToDB() error {
 	if err := updateStateMachineState(sm, sm.CurrentState); err != nil {
@@ -658,20 +85,12 @@ func (sm *StateMachine) saveStateToDB() error {
 	return nil
 }
 
-// TODO: create unit tests for this
-// Load the serialized JSON state data from the database
-func loadStateMachineFromDB(stateMachineType string, id string, db *sql.DB) (*StateMachine, error) {
-	// Load serialized state data from the database (replace with your database logic)
-	sm := &StateMachine{
-		UniqueID: id,
-		Name:     stateMachineType,
-		DB:       db,
-	}
-	sm, err := loadAndLockStateMachine(sm)
+func (sm *StateMachine) serializeToJSON() ([]byte, error) {
+	serialized, err := json.Marshal(sm)
 	if err != nil {
-		return nil, NewDatabaseOperationError("loadAndLockStateMachine", err)
+		return nil, err
 	}
-	return sm, nil
+	return serialized, nil
 }
 
 // TODO: create unit tests for this
@@ -828,7 +247,7 @@ func (sm *StateMachine) updateStateMachineState(context *Context, newState State
 	case StateRollback:
 		sm.ResumeFromStep = stepNumber - 1
 		// we're moving backward direction and the FromStep is the current step
-	case StateRetryStart:
+	case StateStartRetry:
 		newState = StateRetry
 	case StateRetryFailed:
 		newState = StateFailed
@@ -896,13 +315,13 @@ func (sm *StateMachine) determineNewState(context *Context, event Event) (State,
 	case OnRetry:
 		newState = StateRetry
 		if sm.CurrentState != StateRetry {
-			newState = StateRetryStart
+			newState = StateStartRetry
 		}
 		shouldRetry = true
 	case OnCancelled:
 		newState = StateCancelled
 	case OnLock:
-		newState = StateInProgress
+		newState = StateLocked
 	case OnUnknownSituation:
 		newState = StateParked
 	default:
@@ -911,7 +330,8 @@ func (sm *StateMachine) determineNewState(context *Context, event Event) (State,
 	}
 
 	if !IsValidTransition(sm.CurrentState, event, newState) {
-		return StateUnknown, false, NewStateTransitionError(sm.CurrentState, newState, event)
+		return StateUnknown, false, NewStateTransitionError(sm.CurrentState, newState, event,
+			fmt.Errorf("invalid transition from %s to %s", sm.CurrentState, newState))
 	}
 
 	return newState, shouldRetry, nil
@@ -951,7 +371,8 @@ func (sm *StateMachine) checkAndObtainGlobalLock() error {
 		if ownedByThisInstance, err := isGlobalLockOwnedByThisInstance(tx, sm); err != nil {
 			return err
 		} else if !ownedByThisInstance {
-			return NewLockAlreadyHeldError(GlobalLock)
+			return NewLockAlreadyHeldError(GlobalLock,
+				fmt.Errorf("you can't acquire the global lock for this state machine and LookupKey because it's already held by another instance"))
 		}
 		// This instance already owns the lock, so proceed.
 		return nil
@@ -990,7 +411,8 @@ func (sm *StateMachine) checkAndObtainLocalLock() error {
 		if ownedByThisInstance, err := isGlobalLockOwnedByThisInstance(tx, sm); err != nil {
 			return err
 		} else if !ownedByThisInstance {
-			return NewLockAlreadyHeldError(GlobalLock)
+			return NewLockAlreadyHeldError(GlobalLock,
+				fmt.Errorf("you can't acquire the local lock for this state machine and LookupKey because a global lock exists and it's already held by another instance"))
 		}
 	}
 
@@ -1006,7 +428,8 @@ func (sm *StateMachine) checkAndObtainLocalLock() error {
 		if ownedByThisInstance, err := isLocalLockOwnedByThisInstance(tx, sm); err != nil {
 			return err
 		} else if !ownedByThisInstance {
-			return NewLockAlreadyHeldError(LocalLock)
+			return NewLockAlreadyHeldError(LocalLock,
+				fmt.Errorf("you can't acquire the local lock for this state machine because it's already held by another instance"))
 		}
 		// This instance already owns the lock, so proceed.
 		return nil
@@ -1033,26 +456,6 @@ func (sm *StateMachine) sendKafkaEvent() error {
 	return nil
 }
 
-// IsValidTransition checks if a transition from one state to another is valid.
-func IsValidTransition(currentState State, event Event, newState State) bool {
-	validTransitions, ok := ValidTransitions[currentState]
-	if !ok {
-		return false
-	}
-
-	validNextStates, ok := validTransitions[event]
-	if !ok {
-		return false
-	}
-
-	for _, state := range validNextStates {
-		if state == newState || state == AnyState {
-			return true
-		}
-	}
-	return false
-}
-
 // CalculateNextRetryDelay calculates the next retry delay based on the retry policy.
 func (sm *StateMachine) CalculateNextRetryDelay() time.Duration {
 	baseDelay := sm.BaseDelay // Starting delay of 1 second
@@ -1066,6 +469,13 @@ func (sm *StateMachine) CalculateNextRetryDelay() time.Duration {
 // Run executes the state machine.
 // Run can be called on any instantiated state machine.
 func (sm *StateMachine) Run() error {
+	if sm.CurrentState == StateSleeping {
+		// Logic to handle the sleeping state
+		// This could involve queuing the state machine and periodically checking if the lock is lifted
+		return NewSleepStateError(sm.MachineLockInfo.Start, sm.MachineLockInfo.End,
+			fmt.Errorf("state machine is sleeping"))
+	}
+
 	if err := sm.checkAndAcquireLocks(); err != nil {
 		return err
 	}
@@ -1113,6 +523,11 @@ func NewStateMachine(config StateMachineConfig) (*StateMachine, error) {
 		panic(err)
 	}
 
+	err = CreateStateMachineLockTableIfNotExists(config.DB)
+	if err != nil {
+		panic(err)
+	}
+
 	if config.RetryPolicy.RetryType == "" {
 		config.RetryPolicy.RetryType = ExponentialBackoff
 	}
@@ -1123,6 +538,12 @@ func NewStateMachine(config StateMachineConfig) (*StateMachine, error) {
 
 	if config.RetryPolicy.MaxTimeout == 0 {
 		config.RetryPolicy.MaxTimeout = 10 * time.Second
+	}
+
+	currentTime := time.Now()
+	locks, err := checkStateMachineTypeLock(config.DB, config.Name, currentTime)
+	if err != nil {
+		return nil, err
 	}
 
 	sm := &StateMachine{
@@ -1142,6 +563,18 @@ func NewStateMachine(config StateMachineConfig) (*StateMachine, error) {
 		MaxTimeout:                    config.RetryPolicy.MaxTimeout,
 		BaseDelay:                     config.RetryPolicy.BaseDelay,
 		UnlockGlobalLockAfterEachStep: true,
+	}
+
+	for _, lock := range locks {
+		sm.MachineLockInfo = &lock
+		if lock.Type == MachineLockTypeSleepState {
+			sm.CurrentState = StateSleeping
+
+			break
+		} else if lock.Type == MachineLockTypeImmediateReject {
+			return nil, NewImmediateRejectionError(lock.Start, lock.End,
+				fmt.Errorf("failed to save or process this machine due to active %s lock", MachineLockTypeImmediateReject))
+		}
 	}
 
 	if len(config.Handlers) > 0 {
@@ -1278,7 +711,8 @@ func (sm *StateMachine) ForceState(state State) *StateMachine {
 // SetState sets the state machine's state, returning an error if the transition is invalid.
 func (sm *StateMachine) SetState(newState State, event Event) error {
 	if !IsValidTransition(sm.CurrentState, event, newState) {
-		return NewStateTransitionError(sm.CurrentState, newState, event)
+		return NewStateTransitionError(sm.CurrentState, newState, event,
+			fmt.Errorf("failed to set the state because its an invalid transition from %s to %s", sm.CurrentState, newState))
 	}
 	sm.CurrentState = newState
 	return nil
@@ -1352,7 +786,8 @@ func (sm *StateMachine) Rollback() error {
 
 	// Check if the transition from the current state with OnRollback event is valid
 	if !IsValidTransition(sm.CurrentState, OnRollback, state) {
-		return NewStateTransitionError(sm.CurrentState, state, OnRollback)
+		return NewStateTransitionError(sm.CurrentState, state, OnRollback,
+			fmt.Errorf("failed to Rollback because transition from %s to %s is invalid", sm.CurrentState, state))
 	}
 	sm.CurrentState = StateRollback
 	return sm.Run()
@@ -1364,7 +799,8 @@ func (sm *StateMachine) Rollback() error {
 func (sm *StateMachine) Resume() error {
 	// Check if the transition from the current state with OnResume event is valid
 	if !IsValidTransition(sm.CurrentState, OnResume, StateOpen) {
-		return NewStateTransitionError(sm.CurrentState, StateOpen, OnResume)
+		return NewStateTransitionError(sm.CurrentState, StateOpen, OnResume,
+			fmt.Errorf("failed to Resume because transition from %s to %s is invalid", sm.CurrentState, StateOpen))
 	}
 	sm.CurrentState = StateOpen
 	return sm.Run()
@@ -1374,7 +810,8 @@ func (sm *StateMachine) Resume() error {
 func (sm *StateMachine) ExitParkedState(newState State) error {
 	// Validate the transition out of StateParked
 	if !IsValidTransition(StateParked, OnManualOverride, newState) {
-		return NewStateTransitionError(StateParked, newState, OnManualOverride)
+		return NewStateTransitionError(StateParked, newState, OnManualOverride,
+			fmt.Errorf("failed to exit parked state because transition from %s to %s is invalid", StateParked, newState))
 	}
 	sm.CurrentState = newState
 	return nil

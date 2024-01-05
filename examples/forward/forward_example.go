@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -116,18 +117,24 @@ func main() {
 
 	sm, err := statemachine.NewStateMachine(config)
 	if err != nil {
-		switch e := err.(type) {
-		case *statemachine.StateTransitionError:
-			fmt.Printf("State Transition Error: %s\n", e.Error())
-		case *statemachine.DatabaseOperationError:
-			fmt.Printf("Database Operation Error: %s\n", e.Error())
-		case *statemachine.LockAcquisitionError:
-			fmt.Printf("Lock Acquisition Error: %s\n", e.Error())
-		case *statemachine.LockAlreadyHeldError:
-			fmt.Printf("Lock Already Held Error: %s\n", e.Error())
+		var stateTransitionErr *statemachine.StateTransitionError
+		var dbOpErr *statemachine.DatabaseOperationError
+		var lockAcquisitionErr *statemachine.LockAcquisitionError
+		var lockAlreadyHeldErr *statemachine.LockAlreadyHeldError
+
+		switch {
+		case errors.As(err, &stateTransitionErr):
+			fmt.Printf("State Transition Error: %s\n", stateTransitionErr.Error())
+		case errors.As(err, &dbOpErr):
+			fmt.Printf("Database Operation Error: %s\n", dbOpErr.Error())
+		case errors.As(err, &lockAcquisitionErr):
+			fmt.Printf("Lock Acquisition Error: %s\n", lockAcquisitionErr.Error())
+		case errors.As(err, &lockAlreadyHeldErr):
+			fmt.Printf("Lock Already Held Error: %s\n", lockAlreadyHeldErr.Error())
 		default:
-			fmt.Printf("Unknown Error: %s\n", e.Error())
+			fmt.Printf("Unknown Error: %s\n", err.Error())
 		}
+
 		panic(err)
 	}
 	sm.AddStateCallbacks(statemachine.StatePending, statemachine.StateCallbacks{
@@ -148,18 +155,24 @@ func main() {
 
 	err = sm.Run()
 	if err != nil {
-		switch e := err.(type) {
-		case *statemachine.StateTransitionError:
-			fmt.Printf("State Transition Error: %s\n", e.Error())
-		case *statemachine.DatabaseOperationError:
-			fmt.Printf("Database Operation Error: %s\n", e.Error())
-		case *statemachine.LockAcquisitionError:
-			fmt.Printf("Lock Acquisition Error: %s\n", e.Error())
-		case *statemachine.LockAlreadyHeldError:
-			fmt.Printf("Lock Already Held Error: %s\n", e.Error())
+		var stateTransitionErr *statemachine.StateTransitionError
+		var dbOpErr *statemachine.DatabaseOperationError
+		var lockAcquisitionErr *statemachine.LockAcquisitionError
+		var lockAlreadyHeldErr *statemachine.LockAlreadyHeldError
+
+		switch {
+		case errors.As(err, &stateTransitionErr):
+			fmt.Printf("State Transition Error: %s\n", stateTransitionErr.Error())
+		case errors.As(err, &dbOpErr):
+			fmt.Printf("Database Operation Error: %s\n", dbOpErr.Error())
+		case errors.As(err, &lockAcquisitionErr):
+			fmt.Printf("Lock Acquisition Error: %s\n", lockAcquisitionErr.Error())
+		case errors.As(err, &lockAlreadyHeldErr):
+			fmt.Printf("Lock Already Held Error: %s\n", lockAlreadyHeldErr.Error())
 		default:
-			fmt.Printf("Unknown Error: %s\n", e.Error())
+			fmt.Printf("Unknown Error: %s\n", err.Error())
 		}
+
 		panic(err)
 	}
 

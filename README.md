@@ -100,6 +100,73 @@ Local Locks are designed for scenarios where multiple instances of a state machi
 - **No Lock or Unlocked State**: The absence of a record with the relevant `LookupKey` or a record with a past `UnlockTimestamp` indicates no lock or an unlocked state.
 
 
+Immediate Rejection Lock and Sleep State Lock.
+
+### New Lock Types
+
+#### 1. Immediate Rejection Lock
+
+This lock type immediately rejects any new requests for a specific state machine type when the lock is active.
+
+- **Behavior**: When a request is received, the system checks for an active Immediate Rejection Lock for the requested state machine type. If the lock is active, the request is immediately rejected with an appropriate error message.
+- **Use Case**: Useful in scenarios where no new operations should be initiated for a specific state machine type, such as during critical updates or maintenance specific to that type.
+
+#### 2. Sleep State Lock
+
+This lock type puts incoming requests into a "sleep" state. Requests resume execution once the lock expires or is removed.
+
+- **Behavior**: Upon receiving a request, the system checks for an active Sleep State Lock for the requested state machine type. If the lock is active, the request is put into a sleep state. These requests are queued and resumed once the lock is lifted.
+- **Use Case**: Ideal for scenarios where operations can be delayed without immediate rejection, such as batch processing or non-time-critical tasks.
+
+### Database Representation
+
+To support these new lock types, you can extend your database schema with additional fields or tables. Here's a suggested approach:
+
+- **New Table**: `STATE_MACHINE_TYPE_LOCK`
+  ```
+  | StateMachineType | LockType        | UnlockTimestamp |
+  |------------------|-----------------|-----------------|
+  | TypeA            | ImmediateReject | NULL            |
+  | TypeB            | SleepState      | 2024-01-01      |
+  ```
+
+- **Fields**:
+  - `StateMachineType`: The type of the state machine.
+  - `LockType`: The type of lock (`ImmediateReject` or `SleepState`).
+  - `UnlockTimestamp`: Indicates when the lock is released. A `NULL` or future timestamp signifies that the lock is currently active.
+
+### Implementation in Code
+
+When processing a request, the system should:
+
+1. Check for an active lock for the requested state machine type in the `STATE_MACHINE_TYPE_LOCK` table.
+2. Depending on the lock type:
+   - For `ImmediateReject`, return an error immediately.
+   - For `SleepState`, queue the request and periodically check for the lock to be lifted.
+
+### Error Handling
+
+Define custom error types for these scenarios:
+
+- **ImmediateRejectionError**: Indicates that the request was rejected due to an active Immediate Rejection Lock.
+- **SleepStateError**: Indicates that the request is put into a sleep state due to an active Sleep State Lock.
+
+### Example Usage
+
+```go
+lockType, err := checkStateMachineTypeLock(stateMachineType)
+if err != nil {
+    // Handle error
+}
+
+switch lockType {
+case "ImmediateReject":
+    return NewImmediateRejectionError(stateMachineType)
+case "SleepState":
+    // Put request into sleep state and monitor for lock release
+    return NewSleepStateError(stateMachineType)
+}
+```
 
 
 State Machine Table (for tracking state machines):

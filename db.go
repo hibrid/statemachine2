@@ -153,7 +153,7 @@ func CreateStateMachineTableIfNotExists(db *sql.DB, stateMachineName string) err
 }
 
 func checkLockStatusSQL(tableName, condition string) string {
-	return fmt.Sprintf("SELECT ID FROM %s WHERE %s AND CurrentState = 'in_progress' AND (UnlockedTimestamp IS NULL OR UnlockedTimestamp > NOW()) FOR UPDATE;", normalizeTableName(tableName), condition)
+	return fmt.Sprintf("SELECT ID FROM %s WHERE %s AND CurrentState = '%s' AND (UnlockedTimestamp IS NULL OR UnlockedTimestamp > NOW()) FOR UPDATE;", normalizeTableName(tableName), condition, StateLocked)
 }
 
 // checkLockStatus checks if a lock exists based on provided conditions.
@@ -219,9 +219,6 @@ func obtainLocalLock(tx *sql.Tx, sm *StateMachine) error {
 
 	// Convert zero time.Time to nil for SQL insertion
 	var unlockedTimestamp interface{}
-	//if sm.UnlockedTimestamp != nil {
-	//	unlockedTimestamp = sm.UnlockedTimestamp.UTC()
-	//}
 
 	var lastRetry interface{}
 	if sm.LastRetry == nil {
@@ -232,7 +229,7 @@ func obtainLocalLock(tx *sql.Tx, sm *StateMachine) error {
 	localSQL := obtainLocalLockSQL(sm.Name)
 	// Insert or update the local lock record
 	_, err = tx.Exec(localSQL,
-		sm.UniqueID, StateInProgress, sm.LookupKey, sm.ResumeFromStep, sm.SaveAfterEachStep, sm.KafkaEventTopic, string(serializedState), sm.CreatedTimestamp.UTC(), sm.UpdatedTimestamp.UTC(), unlockedTimestamp, lastRetry, usesGlobalLock, usesLocalLock)
+		sm.UniqueID, StateLocked, sm.LookupKey, sm.ResumeFromStep, sm.SaveAfterEachStep, sm.KafkaEventTopic, string(serializedState), sm.CreatedTimestamp.UTC(), sm.UpdatedTimestamp.UTC(), unlockedTimestamp, lastRetry, usesGlobalLock, usesLocalLock)
 
 	if err != nil {
 		return err
@@ -330,8 +327,20 @@ func queryStateMachinesByType(db *sql.DB, stateMachineName string) ([]StateMachi
 	return stateMachines, nil
 }
 
-func parseTimestamp(timestamp string) (time.Time, error) {
-	return time.Parse("2006-01-02 15:04:05", timestamp)
+// TODO: create unit tests for this
+// Load the serialized JSON state data from the database
+func loadStateMachineFromDB(stateMachineType string, id string, db *sql.DB) (*StateMachine, error) {
+	// Load serialized state data from the database (replace with your database logic)
+	sm := &StateMachine{
+		UniqueID: id,
+		Name:     stateMachineType,
+		DB:       db,
+	}
+	sm, err := loadAndLockStateMachine(sm)
+	if err != nil {
+		return nil, NewDatabaseOperationError("loadAndLockStateMachine", err)
+	}
+	return sm, nil
 }
 
 func loadStateMachineWithNoLock(sm *StateMachine) (*StateMachine, error) {
@@ -466,11 +475,18 @@ func lockStateMachineForTransaction(tx *sql.Tx, sm *StateMachine) error {
 }
 
 func loadAndLockStateMachineSQL(tableName string, stateInProgress State) string {
-	return fmt.Sprintf("UPDATE %s SET CurrentState = '%s', UpdatedTimestamp = NOW() WHERE ID = ?;", tableName, StateInProgress)
+	return fmt.Sprintf("UPDATE %s SET CurrentState = '%s', UpdatedTimestamp = NOW() WHERE ID = ?;", tableName, StateLocked)
 }
 
 func loadAndLockStateMachine(sm *StateMachine) (*StateMachine, error) {
 	tableName := normalizeTableName(sm.Name)
+
+	// check if there is machine type lock
+	locks, err := checkStateMachineTypeLock(sm.DB, sm.Name, time.Now())
+	if err != nil {
+		return nil, err
+	}
+
 	tx, err := sm.DB.Begin()
 	if err != nil {
 		return nil, err
@@ -491,11 +507,29 @@ func loadAndLockStateMachine(sm *StateMachine) (*StateMachine, error) {
 
 	if IsTerminalState(sm.CurrentState) {
 		// Row exists, but the state machine is in a terminal state
-		return loadedSM, fmt.Errorf("state machine is in a terminal state")
+		return nil, NewDatabaseOperationError("loadAndLockStateMachine",
+			fmt.Errorf("state machine is in a terminal state %s", sm.CurrentState))
 	}
 
-	// Set state to in_progress and update the database
-	_, err = tx.Exec(loadAndLockStateMachineSQL(tableName, StateInProgress), sm.UniqueID)
+	if len(locks) > 0 {
+		// there is a machine type lock
+		sm.MachineLockInfo = &locks[0]
+		// check if the state machine is sleeping
+		if loadedSM.CurrentState == StateSleeping {
+			return loadedSM, NewSleepStateError(locks[0].Start, locks[0].End,
+				fmt.Errorf("state machine can't be locked and loaded because it's sleeping"))
+		}
+		// check if there is a lock for this machine type that halts all executions
+		for _, lock := range locks {
+			if lock.Type == MachineLockTypeHaltAll {
+				return loadedSM, NewHaltAllStateMachinesByTypeError(locks[0].Start, locks[0].End,
+					fmt.Errorf("state machine can't be locked and loaded because everything has been halted"))
+			}
+		}
+	}
+
+	// Set state to locked and update the database
+	_, err = tx.Exec(loadAndLockStateMachineSQL(tableName, StateLocked), sm.UniqueID)
 	if err != nil {
 		return nil, err
 	}
@@ -547,4 +581,88 @@ func updateStateMachineState(sm *StateMachine, newState State) error {
 	}
 
 	return tx.Commit()
+}
+
+func createStateMachineLockTableIfNotExistsSQL() string {
+	return `
+	CREATE TABLE IF NOT EXISTS STATE_MACHINE_TYPE_LOCK (
+		StateMachineType VARCHAR(255),
+		LockType VARCHAR(50),
+		StartTimestamp TIMESTAMP NULL,
+		EndTimestamp TIMESTAMP NULL
+	);`
+}
+
+func CreateStateMachineLockTableIfNotExists(db *sql.DB) error {
+	_, err := db.Exec(createStateMachineLockTableIfNotExistsSQL())
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+type StateMachineTypeLockInfo struct {
+	Type  MachineLockType
+	Start time.Time
+	End   time.Time
+}
+
+func checkStateMachineTypeLockSQL() string {
+	return `SELECT LockType, StartTimestamp, EndTimestamp 
+			  FROM STATE_MACHINE_TYPE_LOCK 
+			  WHERE StateMachineType = ? AND StartTimestamp <= ? AND EndTimestamp >= ?
+			  ORDER BY StartTimestamp ASC`
+}
+
+func checkStateMachineTypeLock(db *sql.DB, stateMachineType string, queryTime time.Time) ([]StateMachineTypeLockInfo, error) {
+	var locks []StateMachineTypeLockInfo
+
+	rows, err := db.Query(checkStateMachineTypeLockSQL(), stateMachineType, queryTime.UTC(), queryTime.UTC())
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return locks, nil
+		}
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var lockTypeStr string
+		var startTimestampStr, endTimestampStr sql.NullString
+		var startTimestamp, endTimestamp time.Time
+
+		if err := rows.Scan(&lockTypeStr, &startTimestampStr, &endTimestampStr); err != nil {
+			return nil, err
+		}
+
+		if startTimestampStr.Valid {
+			startTimestamp, err = parseTimestamp(startTimestampStr.String)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		if endTimestampStr.Valid {
+			endTimestamp, err = parseTimestamp(endTimestampStr.String)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		lockType := ParseMachineLockType(lockTypeStr)
+
+		locks = append(locks, StateMachineTypeLockInfo{
+			Type:  lockType,
+			Start: startTimestamp,
+			End:   endTimestamp,
+		})
+
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return locks, nil
 }

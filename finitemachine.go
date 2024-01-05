@@ -129,7 +129,7 @@ func DetermineExecutionAction(inputArbitraryData map[string]interface{}, smCtx *
 		lastState := getLastNonParkedState(smCtx.TransitionHistory)
 		return restartExecutionFromState(lastState, smCtx)
 
-	case StatePending, StateOpen:
+	case StateSleeping, StatePending, StateOpen:
 		executionEvent, outputData, err = smCtx.Handler.ExecuteForward(inputArbitraryData, smCtx.TransitionHistory)
 		// assert that executionevent is a forwardEven
 		if forwardEvent, ok := executionEvent.(ForwardEvent); ok {
@@ -182,7 +182,7 @@ func DetermineExecutionAction(inputArbitraryData map[string]interface{}, smCtx *
 
 func restartExecutionFromState(state State, smCtx *Context) (Event, error) {
 	switch state {
-	case StatePending, StateOpen:
+	case StateSleeping, StatePending, StateOpen:
 		executionEvent, _, err := smCtx.Handler.ExecuteForward(smCtx.InputArbitraryData, smCtx.TransitionHistory)
 		return executionEvent.ToEvent(), err
 	case StatePaused:
@@ -248,18 +248,4 @@ func (smCtx *Context) Handle() (executionEvent Event, err error) {
 	outputArbitraryData = CopyMap(smCtx.OutputArbitraryData)
 
 	return executionEvent, err
-}
-
-func CopyMap(m map[string]interface{}) map[string]interface{} {
-	cp := make(map[string]interface{})
-	for k, v := range m {
-		vm, ok := v.(map[string]interface{})
-		if ok {
-			cp[k] = CopyMap(vm)
-		} else {
-			cp[k] = v
-		}
-	}
-
-	return cp
 }

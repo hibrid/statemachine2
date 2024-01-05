@@ -2,8 +2,8 @@ package statemachine
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
-	"regexp"
 	"testing"
 	"time"
 
@@ -222,8 +222,8 @@ func TestLockStateMachineForTransactionSQL(t *testing.T) {
 
 func TestLoadAndLockStateMachineSQL(t *testing.T) {
 	tableName := "test_table"
-	expectedSQL := "UPDATE test_table SET CurrentState = 'in_progress', UpdatedTimestamp = NOW() WHERE ID = ?;"
-	sql := loadAndLockStateMachineSQL(tableName, StateInProgress)
+	expectedSQL := "UPDATE test_table SET CurrentState = 'locked', UpdatedTimestamp = NOW() WHERE ID = ?;"
+	sql := loadAndLockStateMachineSQL(tableName, StateLocked)
 	if sql != expectedSQL {
 		t.Errorf("Expected %s, got %s", expectedSQL, sql)
 	}
@@ -292,6 +292,10 @@ func TestLoadAndLockStateMachine(t *testing.T) {
 		LookupKey:    "test_key",
 	}
 
+	mock.ExpectQuery(escapeRegexChars(checkStateMachineTypeLockSQL())).
+		WithArgs(sm.Name, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnError(sql.ErrNoRows)
+
 	// Begin transaction
 	mock.ExpectBegin()
 
@@ -319,7 +323,7 @@ func TestLoadAndLockStateMachine(t *testing.T) {
 			AddRow("test_id", "test_state", "test_key", 1, true, "test_topic", "{}", "2021-01-01 00:00:00", "2021-01-01 00:00:00", true, false, nil, nil))
 
 	// Update the state machine
-	updateSQL := "UPDATE test_table SET CurrentState = 'in_progress', UpdatedTimestamp = NOW\\(\\) WHERE ID = \\?"
+	updateSQL := "UPDATE test_table SET CurrentState = 'locked', UpdatedTimestamp = NOW\\(\\) WHERE ID = \\?"
 	mock.ExpectExec(updateSQL).WithArgs(sm.UniqueID).WillReturnResult(sqlmock.NewResult(1, 1))
 
 	// Commit transaction
@@ -357,15 +361,15 @@ func TestStateMachine_determineNewState(t *testing.T) {
 		{"OnFailed from StateOpen", StateOpen, OnFailed, StateFailed, false},
 		{"OnPause from StateOpen", StateOpen, OnPause, StatePaused, false},
 		{"OnRollback from StateOpen", StateOpen, OnRollback, StateStartRollback, false},
-		{"OnRetry from StateOpen", StateOpen, OnRetry, StateRetryStart, true},
-		{"OnLock from StateOpen", StateOpen, OnLock, StateInProgress, false},
+		{"OnRetry from StateOpen", StateOpen, OnRetry, StateStartRetry, true},
+		{"OnLock from StateOpen", StateOpen, OnLock, StateLocked, false},
 		{"OnCancelled from StateOpen", StateOpen, OnCancelled, StateCancelled, false},
 		{"OnUnknownSituation from StateOpen", StateOpen, OnUnknownSituation, StateParked, false},
 
 		{"OnSuccess from StateRetry", StateRetry, OnSuccess, StateOpen, false},
 		{"OnFailed from StateRetry", StateRetry, OnFailed, StateFailed, false},
 		{"OnRetry from StateRetry", StateRetry, OnRetry, StateRetry, true},
-		{"OnLock from StateRetry", StateRetry, OnLock, StateInProgress, false},
+		{"OnLock from StateRetry", StateRetry, OnLock, StateLocked, false},
 		{"OnCancelled from StateRetry", StateRetry, OnCancelled, StateCancelled, false},
 		{"OnResetTimeout from StateRetry", StateRetry, OnResetTimeout, StateFailed, false},
 		{"OnUnknownSituation from StateRetry", StateRetry, OnUnknownSituation, StateParked, false},
@@ -415,6 +419,10 @@ func TestLoadStateMachineFromDB(t *testing.T) {
 	stateMachineType := "test_table"
 	id := "test_id"
 
+	mock.ExpectQuery(escapeRegexChars(checkStateMachineTypeLockSQL())).
+		WithArgs(stateMachineType, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnError(sql.ErrNoRows)
+
 	// Set up mock expectations for loadAndLockStateMachine
 	// Begin transaction
 	mock.ExpectBegin()
@@ -443,7 +451,7 @@ func TestLoadStateMachineFromDB(t *testing.T) {
 			AddRow("test_id", "test_state", "test_key", 1, true, "test_topic", "{}", "2021-01-01 00:00:00", "2021-01-01 00:00:00", true, false, nil, nil))
 
 	// Update the state machine
-	updateSQL := "UPDATE .* SET CurrentState = 'in_progress', UpdatedTimestamp = NOW\\(\\) WHERE ID = \\?"
+	updateSQL := "UPDATE .* SET CurrentState = 'locked', UpdatedTimestamp = NOW\\(\\) WHERE ID = \\?"
 	mock.ExpectExec(updateSQL).WithArgs(id).WillReturnResult(sqlmock.NewResult(1, 1))
 
 	// Commit transaction
@@ -664,7 +672,15 @@ func TestStateMachine_Forward_Global_Lock_Run_Integration(t *testing.T) {
     );`)
 	mock.ExpectExec(createTableSQL).WillReturnResult(sqlmock.NewResult(0, 0))
 
-	mock.ExpectExec(escapeRegexChars(createStateMachineTableIfNotExistsSQL(config.Name))).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(escapeRegexChars(createStateMachineTableIfNotExistsSQL(config.Name))).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	mock.ExpectExec(escapeRegexChars(createStateMachineLockTableIfNotExistsSQL())).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	mock.ExpectQuery(escapeRegexChars(checkStateMachineTypeLockSQL())).
+		WithArgs(config.Name, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnError(sql.ErrNoRows)
 
 	var usesGlobalLock, usesLocalLock bool
 	if config.LockType == GlobalLock {
@@ -795,6 +811,13 @@ func TestStateMachine_Forward_Run_Integration(t *testing.T) {
 
 	mock.ExpectExec(escapeRegexChars(createStateMachineTableIfNotExistsSQL(config.Name))).WillReturnResult(sqlmock.NewResult(0, 0))
 
+	mock.ExpectExec(escapeRegexChars(createStateMachineLockTableIfNotExistsSQL())).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	mock.ExpectQuery(escapeRegexChars(checkStateMachineTypeLockSQL())).
+		WithArgs(config.Name, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnError(sql.ErrNoRows)
+
 	var usesGlobalLock, usesLocalLock bool
 	if config.LockType == GlobalLock {
 		usesGlobalLock = true
@@ -887,6 +910,109 @@ func TestStateMachine_Forward_Run_Integration(t *testing.T) {
 
 }
 
+func TestStateMachine_Machine_Lock_Sleep_Integration(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("an error '%s' was not expected when opening a stub database connection", err)
+	}
+	defer db.Close()
+
+	// Initialize StateMachine with necessary configuration
+	config := StateMachineConfig{
+		Name:                 "testing",
+		UniqueStateMachineID: "test1",
+		LookupKey:            "5",
+		DB:                   db,
+		Handlers:             []StepHandler{&TestHandler{}, &TestHandler2{}},
+		ExecuteSynchronously: true,
+		RetryPolicy: RetryPolicy{
+			MaxTimeout: 10 * time.Second,
+			BaseDelay:  1 * time.Second,
+			RetryType:  ExponentialBackoff,
+		},
+		LockType: LocalLock,
+	}
+
+	// Set up expectations for CreateGlobalLockTableIfNotExists
+	createTableSQL := escapeRegexChars(`CREATE TABLE IF NOT EXISTS GLOBAL_LOCK (
+        ID INT NOT NULL AUTO_INCREMENT,
+        StateMachineType VARCHAR(255),
+        StateMachineID VARCHAR(255),
+        LookupKey VARCHAR(255),
+        LockTimestamp TIMESTAMP,
+        UnlockTimestamp TIMESTAMP NULL,
+        PRIMARY KEY (ID),
+        INDEX (StateMachineType),
+        INDEX (LookupKey),
+        INDEX (UnlockTimestamp)
+    );`)
+	mock.ExpectExec(createTableSQL).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	mock.ExpectExec(escapeRegexChars(createStateMachineTableIfNotExistsSQL(config.Name))).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	mock.ExpectExec(escapeRegexChars(createStateMachineLockTableIfNotExistsSQL())).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	mock.ExpectQuery(escapeRegexChars(checkStateMachineTypeLockSQL())).
+		WithArgs(config.Name, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"LockType", "StartTimestamp", "EndTimestamp"}).
+			AddRow("SleepState", "2009-05-18 22:11:11", "2009-05-19 22:11:11"))
+
+	var usesGlobalLock, usesLocalLock bool
+	if config.LockType == GlobalLock {
+		usesGlobalLock = true
+	}
+	if config.LockType == LocalLock {
+		usesLocalLock = true
+	}
+
+	mock.ExpectExec(escapeRegexChars(insertStateMachineSQL(config.Name))).WithArgs(
+		config.UniqueStateMachineID,
+		StateSleeping,
+		config.LookupKey,
+		0,
+		true,
+		config.KafkaEventTopic,
+		sqlmock.AnyArg(),
+		sqlmock.AnyArg(),
+		sqlmock.AnyArg(),
+		nil,
+		nil,
+		usesGlobalLock,
+		usesLocalLock).WillReturnResult(sqlmock.NewResult(1, 1))
+
+	sm, err := NewStateMachine(config)
+	// confirm that the state machine is asleep by looking for the SleepStateError
+	var sleepStateErr *SleepStateError
+	if errors.As(err, &sleepStateErr) {
+		t.Fatalf("error creating StateMachine should have been asleep: %v", err)
+	}
+
+	// Execute the Run method
+	err = sm.Run()
+	if !errors.As(err, &sleepStateErr) {
+		t.Errorf("Run() resulted in an error: %v", err)
+	}
+
+	// Assert that all expectations were met
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("there were unfulfilled expectations: %s", err)
+	}
+
+	if sm.CurrentState != StateSleeping {
+		t.Errorf("Run() did not result in a sleeping state machine")
+	}
+
+	if sm.LastRetry != nil {
+		t.Errorf("Run() should not have set LastRetry")
+	}
+
+	if sm.ResumeFromStep != 0 {
+		t.Errorf("Run() should have set ResumeFromStep to 0")
+	}
+
+}
+
 func TestStateMachine_Backward_Run_Integration(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -926,6 +1052,13 @@ func TestStateMachine_Backward_Run_Integration(t *testing.T) {
 	mock.ExpectExec(createTableSQL).WillReturnResult(sqlmock.NewResult(0, 0))
 
 	mock.ExpectExec(escapeRegexChars(createStateMachineTableIfNotExistsSQL(config.Name))).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	mock.ExpectExec(escapeRegexChars(createStateMachineLockTableIfNotExistsSQL())).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	mock.ExpectQuery(escapeRegexChars(checkStateMachineTypeLockSQL())).
+		WithArgs(config.Name, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnError(sql.ErrNoRows)
 
 	var usesGlobalLock, usesLocalLock bool
 	if config.LockType == GlobalLock {
@@ -1084,6 +1217,13 @@ func TestStateMachine_Forward_Retry_Run_Integration(t *testing.T) {
 	mock.ExpectExec(createTableSQL).WillReturnResult(sqlmock.NewResult(0, 0))
 
 	mock.ExpectExec(escapeRegexChars(createStateMachineTableIfNotExistsSQL(config.Name))).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	mock.ExpectExec(escapeRegexChars(createStateMachineLockTableIfNotExistsSQL())).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	mock.ExpectQuery(escapeRegexChars(checkStateMachineTypeLockSQL())).
+		WithArgs(config.Name, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnError(sql.ErrNoRows)
 
 	var usesGlobalLock, usesLocalLock bool
 	if config.LockType == GlobalLock {
@@ -1247,6 +1387,13 @@ func TestStateMachine_Backward_Retry_Run_Integration(t *testing.T) {
 	mock.ExpectExec(createTableSQL).WillReturnResult(sqlmock.NewResult(0, 0))
 
 	mock.ExpectExec(escapeRegexChars(createStateMachineTableIfNotExistsSQL(config.Name))).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	mock.ExpectExec(escapeRegexChars(createStateMachineLockTableIfNotExistsSQL())).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	mock.ExpectQuery(escapeRegexChars(checkStateMachineTypeLockSQL())).
+		WithArgs(config.Name, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnError(sql.ErrNoRows)
 
 	var usesGlobalLock, usesLocalLock bool
 	if config.LockType == GlobalLock {
@@ -1475,10 +1622,6 @@ func TestUpdateStateMachineState(t *testing.T) {
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("there were unfulfilled expectations: %s", err)
 	}
-}
-
-func escapeRegexChars(input string) string {
-	return regexp.QuoteMeta(input)
 }
 
 func TestStateMachine_ExitParkedState(t *testing.T) {
