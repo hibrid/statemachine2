@@ -7,6 +7,47 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 )
 
+func TestRemoveGlobalLockOwnedByThisMachineType(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("an error '%s' was not expected when opening a stub database connection", err)
+	}
+	defer db.Close()
+
+	stateMachine := &StateMachine{
+		Name:      "TestMachine",
+		LookupKey: "TestKey",
+	}
+
+	mock.ExpectBegin()
+
+	// Start a mock transaction
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("an error '%s' was not expected when starting a transaction", err)
+	}
+
+	// Mock the SQL execution
+	mock.ExpectExec(escapeRegexChars(removeGlobalLockOwnedByThisMachineTypeSQL())).
+		WithArgs(stateMachine.Name, stateMachine.LookupKey).
+		WillReturnResult(sqlmock.NewResult(0, 1)) // Mocking one record updated
+
+	// Call the function
+	if err := removeGlobalLockOwnedByThisMachineType(tx, stateMachine); err != nil {
+		t.Errorf("error was not expected while removing global lock: %s", err)
+	}
+
+	mock.ExpectCommit()
+
+	// Commit the transaction
+	tx.Commit()
+
+	// Check if the expectations were met
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("there were unfulfilled expectations: %s", err)
+	}
+}
+
 func TestDeleteLock(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

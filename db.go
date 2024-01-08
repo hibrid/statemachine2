@@ -73,7 +73,7 @@ func removeGlobalLockOwnedByThisMachineTypeSQL() string {
 	return "UPDATE GLOBAL_LOCK SET UnlockTimestamp = NOW() WHERE StateMachineType = ? AND LookupKey = ? AND (UnlockTimestamp IS NULL OR UnlockTimestamp > NOW());"
 }
 func removeGlobalLockOwnedByThisMachineType(tx *sql.Tx, sm *StateMachine) error {
-	_, err := tx.Exec(removeGlobalLockOwnedByThisInstanceSQL(), sm.Name, sm.LookupKey)
+	_, err := tx.Exec(removeGlobalLockOwnedByThisMachineTypeSQL(), sm.Name, sm.LookupKey)
 	if err != nil {
 		return err
 	}
