@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -42,6 +43,11 @@ func (handler *Step1) ExecuteResume(data map[string]interface{}, transitionHisto
 	return statemachine.ResumeSuccess, data, nil
 }
 
+func (handler *Step1) ExecuteCancel(data map[string]interface{}, transitionHistory []statemachine.TransitionHistory) (statemachine.CancelEvent, map[string]interface{}, error) {
+	// Implement backward action logic here.
+	return statemachine.CancelSuccess, data, nil
+}
+
 type Step2 struct {
 }
 
@@ -72,6 +78,11 @@ func (handler *Step2) ExecuteResume(data map[string]interface{}, transitionHisto
 	return statemachine.ResumeSuccess, data, nil
 }
 
+func (handler *Step2) ExecuteCancel(data map[string]interface{}, transitionHistory []statemachine.TransitionHistory) (statemachine.CancelEvent, map[string]interface{}, error) {
+	// Implement backward action logic here.
+	return statemachine.CancelSuccess, data, nil
+}
+
 func afterEventCallback(sm *statemachine.StateMachine, ctx *statemachine.Context) error {
 	// Logic for after event callback
 	fmt.Println(fmt.Printf("After event callback triggered for event %s and step %s", ctx.EventEmitted.String(), ctx.Handler.Name()))
@@ -84,7 +95,7 @@ func enterStateCallback(sm *statemachine.StateMachine, ctx *statemachine.Context
 	return nil
 }
 
-func leaveStateCallback(sm *statemachine.StateMachine, ctx *statemachine.Context) error {
+func leaveStateCallback2(sm *statemachine.StateMachine, ctx *statemachine.Context) error {
 	// Logic for leave state callback
 	fmt.Println(fmt.Printf("Leave state callback triggered for state %s and step %s", sm.CurrentState, ctx.Handler.Name()))
 	return nil
@@ -103,7 +114,7 @@ func main() {
 		BaseDelay:  1 * time.Second,
 		RetryType:  statemachine.ExponentialBackoff,
 	}
-
+	context, cancel := context.WithCancel(context.Background())
 	config := statemachine.StateMachineConfig{
 		Name: "testing",
 		//UniqueStateMachineID: "test1",
@@ -113,6 +124,7 @@ func main() {
 		ExecuteSynchronously: true, // Will execute the state machine steps synchronously using recursion and will block until the state machine completes
 		RetryPolicy:          retryPolicy,
 		LockType:             statemachine.LocalLock,
+		Context:              context,
 	}
 
 	sm, err := statemachine.NewStateMachine(config)
@@ -137,6 +149,12 @@ func main() {
 
 		panic(err)
 	}
+
+	leaveStateCallback := func(sm *statemachine.StateMachine, ctx *statemachine.Context) error {
+		cancel()
+		return nil
+	}
+
 	sm.AddStateCallbacks(statemachine.StatePending, statemachine.StateCallbacks{
 		AfterAnEvent:  afterEventCallback,
 		BeforeTheStep: enterStateCallback,
@@ -146,13 +164,13 @@ func main() {
 	sm.AddStateCallbacks(statemachine.StateOpen, statemachine.StateCallbacks{
 		AfterAnEvent:  afterEventCallback,
 		BeforeTheStep: enterStateCallback,
-		AfterTheStep:  leaveStateCallback,
+		AfterTheStep:  leaveStateCallback2,
 	})
 	step1Handler := &Step1{}
 	sm.AddStep(step1Handler, step1Handler.Name())
 	step2Handler := &Step2{}
 	sm.AddStep(step2Handler, step2Handler.Name())
-
+	//cancel()
 	err = sm.Run()
 	if err != nil {
 		var stateTransitionErr *statemachine.StateTransitionError

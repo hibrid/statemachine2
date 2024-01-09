@@ -36,3 +36,31 @@ func (dh *completeHandler) ExecuteResume(data map[string]interface{}, transition
 	// Implement backward action logic here.
 	return ResumeSuccess, data, nil
 }
+
+// completeHandler is a default handler that does nothing but complete the state machine.
+type cancelHandler struct {
+}
+
+func (handler *cancelHandler) Name() string {
+	return "CompleteHandler" // Provide a default name for the handler
+}
+
+func (handler *cancelHandler) ExecuteForward(data map[string]interface{}, transitionHistory []TransitionHistory) (ForwardEvent, map[string]interface{}, error) {
+	// Return the modified data
+	return ForwardCancel, data, nil
+}
+
+func (dh *cancelHandler) ExecuteBackward(data map[string]interface{}, transitionHistory []TransitionHistory) (BackwardEvent, map[string]interface{}, error) {
+	// Implement backward action logic here.
+	return BackwardCancel, data, nil
+}
+
+func (dh *cancelHandler) ExecutePause(data map[string]interface{}, transitionHistory []TransitionHistory) (PauseEvent, map[string]interface{}, error) {
+	// Implement backward action logic here.
+	return PauseCancel, data, nil
+}
+
+func (dh *cancelHandler) ExecuteResume(data map[string]interface{}, transitionHistory []TransitionHistory) (ResumeEvent, map[string]interface{}, error) {
+	// Implement backward action logic here.
+	return ResumeCancel, data, nil
+}

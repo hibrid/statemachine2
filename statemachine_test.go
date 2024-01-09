@@ -39,6 +39,10 @@ func (handler *TestHandler) ExecuteResume(data map[string]interface{}, transitio
 	return ResumeSuccess, data, nil
 }
 
+func (handler *TestHandler) ExecuteCancel(data map[string]interface{}, transitionHistory []TransitionHistory) (CancelEvent, map[string]interface{}, error) {
+	return CancelSuccess, data, nil
+}
+
 type TestHandler2 struct {
 }
 
@@ -65,6 +69,10 @@ func (handler *TestHandler2) ExecutePause(data map[string]interface{}, transitio
 
 func (handler *TestHandler2) ExecuteResume(data map[string]interface{}, transitionHistory []TransitionHistory) (ResumeEvent, map[string]interface{}, error) {
 	return ResumeSuccess, data, nil
+}
+
+func (handler *TestHandler2) ExecuteCancel(data map[string]interface{}, transitionHistory []TransitionHistory) (CancelEvent, map[string]interface{}, error) {
+	return CancelSuccess, data, nil
 }
 
 type BackwardTestHandler struct {
@@ -95,6 +103,10 @@ func (handler *BackwardTestHandler) ExecuteResume(data map[string]interface{}, t
 	return ResumeSuccess, data, nil
 }
 
+func (handler *BackwardTestHandler) ExecuteCancel(data map[string]interface{}, transitionHistory []TransitionHistory) (CancelEvent, map[string]interface{}, error) {
+	return CancelSuccess, data, nil
+}
+
 type ForwardRetryTestHandler struct {
 }
 
@@ -123,6 +135,10 @@ func (handler *ForwardRetryTestHandler) ExecuteResume(data map[string]interface{
 	return ResumeSuccess, data, nil
 }
 
+func (handler *ForwardRetryTestHandler) ExecuteCancel(data map[string]interface{}, transitionHistory []TransitionHistory) (CancelEvent, map[string]interface{}, error) {
+	return CancelSuccess, data, nil
+}
+
 type BackwardRetryTestHandler struct {
 }
 
@@ -148,6 +164,10 @@ func (handler *BackwardRetryTestHandler) ExecutePause(data map[string]interface{
 
 func (handler *BackwardRetryTestHandler) ExecuteResume(data map[string]interface{}, transitionHistory []TransitionHistory) (ResumeEvent, map[string]interface{}, error) {
 	return ResumeSuccess, data, nil
+}
+
+func (handler *BackwardRetryTestHandler) ExecuteCancel(data map[string]interface{}, transitionHistory []TransitionHistory) (CancelEvent, map[string]interface{}, error) {
+	return CancelSuccess, data, nil
 }
 
 func TestEvent_String(t *testing.T) {
@@ -880,7 +900,7 @@ func TestStateMachine_Forward_Run_Context_Cancelled_Integration(t *testing.T) {
 
 	// Execute the Run method
 	err = sm.Run()
-	if err == nil {
+	if err != nil {
 		t.Errorf("Run() didn't result in an error: %v", err)
 	}
 

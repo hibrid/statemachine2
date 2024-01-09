@@ -12,6 +12,7 @@ import (
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 type Callback func(*StateMachine, *Context) error
@@ -52,6 +53,7 @@ type StateMachine struct {
 
 	MachineLockInfo *StateMachineTypeLockInfo `json:"-"`
 	Context         context.Context           `json:"-"`
+	Log             *zap.Logger               `json:"-"`
 }
 
 type RetryType string
@@ -96,6 +98,10 @@ func (sm *StateMachine) serializeToJSON() ([]byte, error) {
 	return serialized, nil
 }
 
+func (sm *StateMachine) cancelStateMachine() {
+
+}
+
 // TODO: create unit tests for this
 // processStateMachine processes the state machine based on the current context.
 func (sm *StateMachine) processStateMachine(context *Context) error {
@@ -110,6 +116,10 @@ func (sm *StateMachine) processStateMachine(context *Context) error {
 		handler = &completeHandler{}
 	} else {
 		handler = sm.Handlers[sm.ResumeFromStep]
+	}
+
+	if err := sm.contextCancelled(); err != nil {
+		handler = &cancelHandler{}
 	}
 
 	context.Handler = handler
@@ -166,11 +176,13 @@ func (sm *StateMachine) handleTransition(context *Context, event Event) error {
 		return err
 	}
 
+	// let the previous step complete
 	if err := sm.contextCancelled(); err != nil {
 		if err := sm.updateStateMachineState(context, StateCancelled, OnCancelled); err != nil {
 			return err
 		}
-		return err
+		shouldRetry = false
+		// continue with processing the state machine
 	}
 
 	if err := sm.executeEnterStateCallback(context); err != nil {
@@ -499,10 +511,6 @@ func (sm *StateMachine) Run() error {
 		// This could involve queuing the state machine and periodically checking if the lock is lifted
 		return NewSleepStateError(sm.MachineLockInfo.Start, sm.MachineLockInfo.End,
 			fmt.Errorf("state machine is sleeping"))
-	}
-
-	if err := sm.contextCancelled(); err != nil {
-		return err
 	}
 
 	if err := sm.validateHandlers(); err != nil {

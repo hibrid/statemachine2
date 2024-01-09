@@ -41,6 +41,11 @@ func (handler *Step1) ExecuteResume(data map[string]interface{}, transitionHisto
 	return statemachine.ResumeSuccess, data, nil
 }
 
+func (handler *Step1) ExecuteCancel(data map[string]interface{}, transitionHistory []statemachine.TransitionHistory) (statemachine.CancelEvent, map[string]interface{}, error) {
+	// Implement backward action logic here.
+	return statemachine.CancelSuccess, data, nil
+}
+
 type Step2 struct {
 }
 
@@ -70,6 +75,11 @@ func (handler *Step2) ExecutePause(data map[string]interface{}, transitionHistor
 func (handler *Step2) ExecuteResume(data map[string]interface{}, transitionHistory []statemachine.TransitionHistory) (statemachine.ResumeEvent, map[string]interface{}, error) {
 	// Implement backward action logic here.
 	return statemachine.ResumeSuccess, data, nil
+}
+
+func (handler *Step2) ExecuteCancel(data map[string]interface{}, transitionHistory []statemachine.TransitionHistory) (statemachine.CancelEvent, map[string]interface{}, error) {
+	// Implement backward action logic here.
+	return statemachine.CancelSuccess, data, nil
 }
 
 func afterEventCallback(sm *statemachine.StateMachine, ctx *statemachine.Context) error {

@@ -119,6 +119,7 @@ type PauseEvent int
 const (
 	PauseSuccess PauseEvent = iota
 	PauseFail
+	PauseCancel
 	PauseUnknown
 )
 
@@ -128,6 +129,8 @@ func (e PauseEvent) String() string {
 		return "PauseSuccess"
 	case PauseFail:
 		return "PauseFail"
+	case PauseCancel:
+		return "PauseCancel"
 	default:
 		return fmt.Sprintf("UnknownPauseEvent(%d)", e)
 	}
@@ -140,6 +143,8 @@ func (e PauseEvent) ToEvent() Event {
 		return OnPause
 	case PauseFail:
 		return OnFailed
+	case PauseCancel:
+		return OnCancelled
 	default:
 		return OnUnknownSituation
 	}
@@ -222,11 +227,42 @@ func (e ManualOverrideEvent) ToEvent() Event {
 	}
 }
 
+type CancelEvent int
+
+const (
+	CancelSuccess CancelEvent = iota
+	CancelFail
+	CancelUnknown
+)
+
+func (e CancelEvent) String() string {
+	switch e {
+	case CancelSuccess:
+		return "CancelSuccess"
+	case CancelFail:
+		return "CancelFail"
+	default:
+		return fmt.Sprintf("UnknownCancelEvent(%d)", e)
+	}
+}
+
+func (e CancelEvent) ToEvent() Event {
+	switch e {
+	case CancelSuccess:
+		return OnCancelled
+	case CancelFail:
+		return OnFailed
+	default:
+		return OnUnknownSituation
+	}
+}
+
 type ResumeEvent int
 
 const (
 	ResumeSuccess ResumeEvent = iota
 	ResumeFail
+	ResumeCancel
 )
 
 func (e ResumeEvent) String() string {
@@ -235,6 +271,8 @@ func (e ResumeEvent) String() string {
 		return "ResumeSuccess"
 	case ResumeFail:
 		return "ResumeFail"
+	case ResumeCancel:
+		return "ResumeCancel"
 	default:
 		return fmt.Sprintf("UnknownResumeEvent(%d)", e)
 	}
@@ -247,6 +285,8 @@ func (e ResumeEvent) ToEvent() Event {
 		return OnSuccess
 	case ResumeFail:
 		return OnFailed
+	case ResumeCancel:
+		return OnCancelled
 	default:
 		return OnUnknownSituation
 	}
