@@ -1,6 +1,7 @@
 package statemachine
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -767,6 +768,137 @@ func TestStateMachine_Forward_Global_Lock_Run_Integration(t *testing.T) {
 
 	if sm.ResumeFromStep != 2 {
 		t.Errorf("Run() should have set ResumeFromStep to 2")
+	}
+
+}
+
+func TestStateMachine_Forward_Run_Context_Cancelled_Integration(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("an error '%s' was not expected when opening a stub database connection", err)
+	}
+	defer db.Close()
+
+	context, cancel := context.WithCancel(context.Background())
+
+	// Initialize StateMachine with necessary configuration
+	config := StateMachineConfig{
+		Name:                 "testing",
+		UniqueStateMachineID: "test1",
+		LookupKey:            "5",
+		DB:                   db,
+		Handlers:             []StepHandler{&TestHandler{}, &TestHandler2{}},
+		ExecuteSynchronously: true,
+		RetryPolicy: RetryPolicy{
+			MaxTimeout: 10 * time.Second,
+			BaseDelay:  1 * time.Second,
+			RetryType:  ExponentialBackoff,
+		},
+		LockType: LocalLock,
+		Context:  context,
+	}
+
+	// Set up expectations for CreateGlobalLockTableIfNotExists
+	createTableSQL := escapeRegexChars(`CREATE TABLE IF NOT EXISTS GLOBAL_LOCK (
+        ID INT NOT NULL AUTO_INCREMENT,
+        StateMachineType VARCHAR(255),
+        StateMachineID VARCHAR(255),
+        LookupKey VARCHAR(255),
+        LockTimestamp TIMESTAMP,
+        UnlockTimestamp TIMESTAMP NULL,
+        PRIMARY KEY (ID),
+        INDEX (StateMachineType),
+        INDEX (LookupKey),
+        INDEX (UnlockTimestamp)
+    );`)
+	mock.ExpectExec(createTableSQL).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	mock.ExpectExec(escapeRegexChars(createStateMachineTableIfNotExistsSQL(config.Name))).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	mock.ExpectExec(escapeRegexChars(createStateMachineLockTableIfNotExistsSQL())).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	mock.ExpectQuery(escapeRegexChars(checkStateMachineTypeLockSQL())).
+		WithArgs(config.Name, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnError(sql.ErrNoRows)
+
+	var usesGlobalLock, usesLocalLock bool
+	if config.LockType == GlobalLock {
+		usesGlobalLock = true
+	}
+	if config.LockType == LocalLock {
+		usesLocalLock = true
+	}
+
+	mock.ExpectExec(escapeRegexChars(insertStateMachineSQL(config.Name))).WithArgs(
+		config.UniqueStateMachineID,
+		StatePending,
+		config.LookupKey,
+		0,
+		true,
+		config.KafkaEventTopic,
+		sqlmock.AnyArg(),
+		sqlmock.AnyArg(),
+		sqlmock.AnyArg(),
+		nil,
+		nil,
+		usesGlobalLock,
+		usesLocalLock).WillReturnResult(sqlmock.NewResult(1, 1))
+
+	// Obtain the local lock with a global lock
+	mock.ExpectBegin()
+	mock.ExpectQuery(escapeRegexChars(checkGlobalLockExistsSQL())).WithArgs(config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
+	mock.ExpectQuery(escapeRegexChars(isGlobalLockOwnedByThisInstanceSQL())).WithArgs(config.Name, config.UniqueStateMachineID, config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
+	mock.ExpectQuery(escapeRegexChars(checkLocalLockExistsSQL(config.Name))).WithArgs(config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
+	mock.ExpectQuery(escapeRegexChars(isLocalLockOwnedByThisInstanceSQL(config.Name))).WithArgs(config.UniqueStateMachineID, config.LookupKey).WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow(1))
+
+	mock.ExpectRollback()
+
+	// Update after Handler 1
+	mock.ExpectBegin()
+	mock.ExpectExec(escapeRegexChars(updateStateMachineStateSQL(config.Name))).WithArgs(StateOpen, sqlmock.AnyArg(), 1, sqlmock.AnyArg(), config.UniqueStateMachineID).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	// Update after Handler 2
+	mock.ExpectBegin()
+	mock.ExpectExec(escapeRegexChars(updateStateMachineStateSQL(config.Name))).WithArgs(StateCancelled, sqlmock.AnyArg(), 1, sqlmock.AnyArg(), config.UniqueStateMachineID).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	sm, err := NewStateMachine(config)
+	if err != nil {
+		t.Fatalf("error creating StateMachine: %v", err)
+	}
+
+	leaveStateCallback := func(sm *StateMachine, ctx *Context) error {
+		cancel()
+		return nil
+	}
+
+	sm.AddStateCallbacks(StatePending, StateCallbacks{
+		AfterTheStep: leaveStateCallback,
+	})
+
+	// Execute the Run method
+	err = sm.Run()
+	if err == nil {
+		t.Errorf("Run() didn't result in an error: %v", err)
+	}
+
+	// Assert that all expectations were met
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("there were unfulfilled expectations: %s", err)
+	}
+
+	if sm.CurrentState != StateCancelled {
+		t.Errorf("Run() did not result in a cancelled state machine")
+	}
+
+	if sm.LastRetry != nil {
+		t.Errorf("Run() should not have set LastRetry")
+	}
+
+	if sm.ResumeFromStep != 1 {
+		t.Errorf("Run() should have set ResumeFromStep to 1")
 	}
 
 }
@@ -1689,7 +1821,7 @@ func TestStateMachine_Resume(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sm := &StateMachine{CurrentState: tt.currentState, Handlers: []StepHandler{&TestHandler{}}}
+			sm := &StateMachine{CurrentState: tt.currentState, Handlers: []StepHandler{&TestHandler{}}, Context: context.Background()}
 
 			err := sm.Resume()
 			if (err != nil) != tt.expectError {
@@ -1742,7 +1874,7 @@ func TestStateMachine_Rollback(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sm := &StateMachine{CurrentState: tt.currentState, Handlers: []StepHandler{&TestHandler{}}}
+			sm := &StateMachine{CurrentState: tt.currentState, Handlers: []StepHandler{&TestHandler{}}, Context: context.Background()}
 
 			err := sm.Rollback()
 			if (err != nil) != tt.expectError {

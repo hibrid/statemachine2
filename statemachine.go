@@ -1,6 +1,7 @@
 package statemachine
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -50,6 +51,7 @@ type StateMachine struct {
 	SerializedState      []byte                 `json:"-"`
 
 	MachineLockInfo *StateMachineTypeLockInfo `json:"-"`
+	Context         context.Context           `json:"-"`
 }
 
 type RetryType string
@@ -75,6 +77,7 @@ type StateMachineConfig struct {
 	Handlers             []StepHandler
 	RetryPolicy          RetryPolicy
 	LockType             LockType
+	Context              context.Context
 }
 
 // Save the state machine's serialized JSON to the database
@@ -121,6 +124,7 @@ func (sm *StateMachine) processStateMachine(context *Context) error {
 
 // createContext creates a new context for the state machine.
 // important that we need to copy the map to avoid referencing the same space in memory as we manipulate the data
+// this is not the same as context.Context. This is the context for the statemachine
 func (sm *StateMachine) createContext() *Context {
 	return &Context{
 		InputState:          sm.CurrentState,
@@ -154,7 +158,18 @@ func (sm *StateMachine) handleTransition(context *Context, event Event) error {
 		return err
 	}
 
+	// this also updates the database if configured to do so
+	// this should complete to record what just happened
+	// any cancellation or failure after this point will be recorded in the next step
+	// if this is a synchronous execution
 	if err := sm.updateStateMachineState(context, newState, event); err != nil {
+		return err
+	}
+
+	if err := sm.contextCancelled(); err != nil {
+		if err := sm.updateStateMachineState(context, StateCancelled, OnCancelled); err != nil {
+			return err
+		}
 		return err
 	}
 
@@ -237,6 +252,7 @@ func (sm *StateMachine) updateStateMachineState(context *Context, newState State
 		EventEmitted:        event,
 	}
 
+	// only states that have special logic are here. Everything else is just passed through without update the state
 	switch newState {
 	case StateOpen:
 		historyEntry.FromStep = stepNumber - 1 // the previous step is the current step minus 1
@@ -280,6 +296,15 @@ func (sm *StateMachine) executeEnterStateCallback(context *Context) error {
 		}
 	}
 	return nil
+}
+
+func (sm *StateMachine) contextCancelled() error {
+	select {
+	case <-sm.Context.Done():
+		return sm.Context.Err()
+	default:
+		return nil
+	}
 }
 
 func (sm *StateMachine) determineNewState(context *Context, event Event) (State, bool, error) {
@@ -476,6 +501,10 @@ func (sm *StateMachine) Run() error {
 			fmt.Errorf("state machine is sleeping"))
 	}
 
+	if err := sm.contextCancelled(); err != nil {
+		return err
+	}
+
 	if err := sm.checkAndAcquireLocks(); err != nil {
 		return err
 	}
@@ -509,6 +538,12 @@ func (sm *StateMachine) GetRemainingDelay() time.Duration {
 		return 0
 	}
 	return remainingDelay
+}
+
+// NewStateMachineWithContext initializes a new StateMachine instance with the given config and context.Context
+func NewStateMachineWithContext(context context.Context, config StateMachineConfig) (*StateMachine, error) {
+	config.Context = context
+	return NewStateMachine(config)
 }
 
 // NewStateMachine initializes a new StateMachine instance with the given config and sensible defaults if ommitted.
@@ -563,6 +598,11 @@ func NewStateMachine(config StateMachineConfig) (*StateMachine, error) {
 		MaxTimeout:                    config.RetryPolicy.MaxTimeout,
 		BaseDelay:                     config.RetryPolicy.BaseDelay,
 		UnlockGlobalLockAfterEachStep: true,
+		Context:                       context.Background(),
+	}
+
+	if config.Context != nil {
+		sm.Context = config.Context
 	}
 
 	for _, lock := range locks {
