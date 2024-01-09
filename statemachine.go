@@ -98,10 +98,6 @@ func (sm *StateMachine) serializeToJSON() ([]byte, error) {
 	return serialized, nil
 }
 
-func (sm *StateMachine) cancelStateMachine() {
-
-}
-
 // TODO: create unit tests for this
 // processStateMachine processes the state machine based on the current context.
 func (sm *StateMachine) processStateMachine(context *Context) error {
