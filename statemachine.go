@@ -505,14 +505,15 @@ func (sm *StateMachine) Run() error {
 		return err
 	}
 
+	if err := sm.validateHandlers(); err != nil {
+		return err
+	}
+
 	if err := sm.checkAndAcquireLocks(); err != nil {
 		return err
 	}
 
 	context := sm.createContext()
-	if err := sm.validateHandlers(); err != nil {
-		return err
-	}
 
 	return sm.processStateMachine(context)
 }
