@@ -691,7 +691,7 @@ func TestStateMachine_Forward_Global_Lock_Run_Integration(t *testing.T) {
 		LookupKey:            "5",
 		DB:                   db,
 		//Handlers:             []BaseStepHandler{&TestHandler{}, &TestHandler2{}},
-		Handlers:             []BaseStepHandler{*NewStep(testHandler.Name(), zap.NewNop(), testHandler.ExecuteForward, testHandler.ExecuteBackward, testHandler.ExecutePause, testHandler.ExecuteResume), *NewStep(testHandler2.Name(), zap.NewNop(), testHandler2.ExecuteForward, testHandler2.ExecuteBackward, testHandler2.ExecutePause, testHandler2.ExecuteResume)},
+		Handlers:             []StepHandler{NewStep(testHandler.Name(), zap.NewNop(), testHandler.ExecuteForward, testHandler.ExecuteBackward, testHandler.ExecutePause, testHandler.ExecuteResume), NewStep(testHandler2.Name(), zap.NewNop(), testHandler2.ExecuteForward, testHandler2.ExecuteBackward, testHandler2.ExecutePause, testHandler2.ExecuteResume)},
 		ExecuteSynchronously: true,
 		RetryPolicy: RetryPolicy{
 			MaxTimeout: 10 * time.Second,
@@ -832,7 +832,7 @@ func TestStateMachine_Forward_Run_Context_Cancelled_Integration(t *testing.T) {
 		LookupKey:            "5",
 		DB:                   db,
 		//Handlers:             []StepHandler{&TestHandler{}, &TestHandler2{}},
-		Handlers:             []BaseStepHandler{*NewStep(testHandler.Name(), zap.NewNop(), testHandler.ExecuteForward, testHandler.ExecuteBackward, testHandler.ExecutePause, testHandler.ExecuteResume), *NewStep(testHandler2.Name(), zap.NewNop(), testHandler2.ExecuteForward, testHandler2.ExecuteBackward, testHandler2.ExecutePause, testHandler2.ExecuteResume)},
+		Handlers:             []StepHandler{NewStep(testHandler.Name(), zap.NewNop(), testHandler.ExecuteForward, testHandler.ExecuteBackward, testHandler.ExecutePause, testHandler.ExecuteResume), NewStep(testHandler2.Name(), zap.NewNop(), testHandler2.ExecuteForward, testHandler2.ExecuteBackward, testHandler2.ExecutePause, testHandler2.ExecuteResume)},
 		ExecuteSynchronously: true,
 		RetryPolicy: RetryPolicy{
 			MaxTimeout: 10 * time.Second,
@@ -965,7 +965,7 @@ func TestStateMachine_Forward_Run_Integration(t *testing.T) {
 		LookupKey:            "5",
 		DB:                   db,
 		//Handlers:             []StepHandler{&TestHandler{}, &TestHandler2{}},
-		Handlers:             []BaseStepHandler{*NewStep(testHandler.Name(), zap.NewNop(), testHandler.ExecuteForward, testHandler.ExecuteBackward, testHandler.ExecutePause, testHandler.ExecuteResume), *NewStep(testHandler2.Name(), zap.NewNop(), testHandler2.ExecuteForward, testHandler2.ExecuteBackward, testHandler2.ExecutePause, testHandler2.ExecuteResume)},
+		Handlers:             []StepHandler{NewStep(testHandler.Name(), zap.NewNop(), testHandler.ExecuteForward, testHandler.ExecuteBackward, testHandler.ExecutePause, testHandler.ExecuteResume), NewStep(testHandler2.Name(), zap.NewNop(), testHandler2.ExecuteForward, testHandler2.ExecuteBackward, testHandler2.ExecutePause, testHandler2.ExecuteResume)},
 		ExecuteSynchronously: true,
 		RetryPolicy: RetryPolicy{
 			MaxTimeout: 10 * time.Second,
@@ -1106,7 +1106,7 @@ func TestStateMachine_Machine_Lock_Sleep_Integration(t *testing.T) {
 		LookupKey:            "5",
 		DB:                   db,
 		//Handlers:             []StepHandler{&TestHandler{}, &TestHandler2{}},
-		Handlers:             []BaseStepHandler{*NewStep(testHandler.Name(), zap.NewNop(), testHandler.ExecuteForward, testHandler.ExecuteBackward, testHandler.ExecutePause, testHandler.ExecuteResume), *NewStep(testHandler2.Name(), zap.NewNop(), testHandler2.ExecuteForward, testHandler2.ExecuteBackward, testHandler2.ExecutePause, testHandler2.ExecuteResume)},
+		Handlers:             []StepHandler{NewStep(testHandler.Name(), zap.NewNop(), testHandler.ExecuteForward, testHandler.ExecuteBackward, testHandler.ExecutePause, testHandler.ExecuteResume), NewStep(testHandler2.Name(), zap.NewNop(), testHandler2.ExecuteForward, testHandler2.ExecuteBackward, testHandler2.ExecutePause, testHandler2.ExecuteResume)},
 		ExecuteSynchronously: true,
 		RetryPolicy: RetryPolicy{
 			MaxTimeout: 10 * time.Second,
@@ -1215,7 +1215,7 @@ func TestStateMachine_Backward_Run_Integration(t *testing.T) {
 		LookupKey:            "5",
 		DB:                   db,
 		//Handlers:             []StepHandler{&TestHandler{}, &BackwardTestHandler{}},
-		Handlers:             []BaseStepHandler{*NewStep(testHandler.Name(), zap.NewNop(), testHandler.ExecuteForward, testHandler.ExecuteBackward, testHandler.ExecutePause, testHandler.ExecuteResume), *NewStep(testHandler2.Name(), zap.NewNop(), testHandler2.ExecuteForward, testHandler2.ExecuteBackward, testHandler2.ExecutePause, testHandler2.ExecuteResume)},
+		Handlers:             []StepHandler{NewStep(testHandler.Name(), zap.NewNop(), testHandler.ExecuteForward, testHandler.ExecuteBackward, testHandler.ExecutePause, testHandler.ExecuteResume), NewStep(testHandler2.Name(), zap.NewNop(), testHandler2.ExecuteForward, testHandler2.ExecuteBackward, testHandler2.ExecutePause, testHandler2.ExecuteResume)},
 		ExecuteSynchronously: true,
 		RetryPolicy: RetryPolicy{
 			MaxTimeout: 10 * time.Second,
@@ -1384,7 +1384,7 @@ func TestStateMachine_Forward_Retry_Run_Integration(t *testing.T) {
 		LookupKey:            "5",
 		DB:                   db,
 		//Handlers:             []StepHandler{&TestHandler{}, &ForwardRetryTestHandler{}},
-		Handlers:             []BaseStepHandler{*NewStep(testHandler.Name(), zap.NewNop(), testHandler.ExecuteForward, testHandler.ExecuteBackward, testHandler.ExecutePause, testHandler.ExecuteResume), *NewStep(testHandler2.Name(), zap.NewNop(), testHandler2.ExecuteForward, testHandler2.ExecuteBackward, testHandler2.ExecutePause, testHandler2.ExecuteResume)},
+		Handlers:             []StepHandler{NewStep(testHandler.Name(), zap.NewNop(), testHandler.ExecuteForward, testHandler.ExecuteBackward, testHandler.ExecutePause, testHandler.ExecuteResume), NewStep(testHandler2.Name(), zap.NewNop(), testHandler2.ExecuteForward, testHandler2.ExecuteBackward, testHandler2.ExecutePause, testHandler2.ExecuteResume)},
 		ExecuteSynchronously: true,
 		RetryPolicy: RetryPolicy{
 			MaxTimeout: 10 * time.Second,
@@ -1558,7 +1558,7 @@ func TestStateMachine_Backward_Retry_Run_Integration(t *testing.T) {
 		LookupKey:            "5",
 		DB:                   db,
 		//Handlers:             []StepHandler{&TestHandler{}, &BackwardRetryTestHandler{}},
-		Handlers:             []BaseStepHandler{*NewStep(testHandler.Name(), zap.NewNop(), testHandler.ExecuteForward, testHandler.ExecuteBackward, testHandler.ExecutePause, testHandler.ExecuteResume), *NewStep(testHandler2.Name(), zap.NewNop(), testHandler2.ExecuteForward, testHandler2.ExecuteBackward, testHandler2.ExecutePause, testHandler2.ExecuteResume)},
+		Handlers:             []StepHandler{NewStep(testHandler.Name(), zap.NewNop(), testHandler.ExecuteForward, testHandler.ExecuteBackward, testHandler.ExecutePause, testHandler.ExecuteResume), NewStep(testHandler2.Name(), zap.NewNop(), testHandler2.ExecuteForward, testHandler2.ExecuteBackward, testHandler2.ExecutePause, testHandler2.ExecuteResume)},
 		ExecuteSynchronously: true,
 		RetryPolicy: RetryPolicy{
 			MaxTimeout: 10 * time.Second,
@@ -1884,7 +1884,7 @@ func TestStateMachine_Resume(t *testing.T) {
 		testHandler := &TestHandler{}
 		handler := NewStep("test", zap.NewNop(), testHandler.ExecuteForward, testHandler.ExecuteBackward, testHandler.ExecutePause, testHandler.ExecuteResume)
 		t.Run(tt.name, func(t *testing.T) {
-			sm := &StateMachine{CurrentState: tt.currentState, Handlers: []BaseStepHandler{*handler}, Context: context.Background()}
+			sm := &StateMachine{CurrentState: tt.currentState, Handlers: []StepHandler{handler}, Context: context.Background()}
 
 			err := sm.Resume()
 			if (err != nil) != tt.expectError {
@@ -1939,7 +1939,7 @@ func TestStateMachine_Rollback(t *testing.T) {
 		testHandler := &TestHandler{}
 		handler := NewStep("test", zap.NewNop(), testHandler.ExecuteForward, testHandler.ExecuteBackward, testHandler.ExecutePause, testHandler.ExecuteResume)
 		t.Run(tt.name, func(t *testing.T) {
-			sm := &StateMachine{CurrentState: tt.currentState, Handlers: []BaseStepHandler{*handler}, Context: context.Background()}
+			sm := &StateMachine{CurrentState: tt.currentState, Handlers: []StepHandler{handler}, Context: context.Background()}
 
 			err := sm.Rollback()
 			if (err != nil) != tt.expectError {

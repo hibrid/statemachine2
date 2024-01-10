@@ -10,7 +10,7 @@ type Context struct {
 	EventEmitted        Event                     `json:"eventEmitted"`
 	InputArbitraryData  map[string]interface{}    `json:"inputArbitraryData"`
 	OutputArbitraryData map[string]interface{}    `json:"outputArbitraryData"`
-	Handler             BaseStepHandler           `json:"-"`
+	Handler             StepHandler               `json:"-"`
 	Callbacks           map[string]StateCallbacks `json:"-"`
 	StepNumber          int                       `json:"stepNumber"`
 	TransitionHistory   []TransitionHistory       `json:"transitionHistory"`
