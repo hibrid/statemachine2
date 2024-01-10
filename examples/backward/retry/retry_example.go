@@ -6,6 +6,7 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
+	"go.uber.org/zap"
 
 	statemachine "github.com/hibrid/statemachine2"
 )
@@ -15,6 +16,10 @@ type Step1 struct {
 
 func (handler *Step1) Name() string {
 	return "Numero 1" // Provide a default name for the handler
+}
+
+func (handler *Step1) GetLogger() *zap.Logger {
+	return nil
 }
 
 func (handler *Step1) ExecuteForward(data map[string]interface{}, transitionHistory []statemachine.TransitionHistory) (statemachine.ForwardEvent, map[string]interface{}, error) {
@@ -51,6 +56,10 @@ type Step2 struct {
 
 func (handler *Step2) Name() string {
 	return "More than one" // Provide a default name for the handler
+}
+
+func (handler *Step2) GetLogger() *zap.Logger {
+	return nil
 }
 
 func (handler *Step2) ExecuteForward(data map[string]interface{}, transitionHistory []statemachine.TransitionHistory) (statemachine.ForwardEvent, map[string]interface{}, error) {
@@ -140,10 +149,12 @@ func main() {
 		BeforeTheStep: enterStateCallback,
 		AfterTheStep:  leaveStateCallback,
 	})
-	step1 := &Step1{}
-	sm.AddStep(step1, step1.Name())
-	step2 := &Step2{}
-	sm.AddStep(step2, step2.Name())
+	step1Handler := &Step1{}
+	step1 := statemachine.NewStep(step1Handler.Name(), zap.NewNop(), step1Handler.ExecuteForward, step1Handler.ExecuteBackward, step1Handler.ExecutePause, step1Handler.ExecuteResume)
+	sm.AddStep(*step1, step1.Name())
+	step2Handler := &Step2{}
+	step2 := statemachine.NewStep(step2Handler.Name(), zap.NewNop(), step2Handler.ExecuteForward, step2Handler.ExecuteBackward, step2Handler.ExecutePause, step2Handler.ExecuteResume)
+	sm.AddStep(*step2, step2.Name())
 
 	err = sm.Run()
 	if err != nil {

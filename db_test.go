@@ -142,38 +142,31 @@ func TestCheckStateMachineTypeLock(t *testing.T) {
 	defer db.Close()
 
 	stateMachineType := "TestMachine"
-	queryTime := time.Now()
+	// January 1, 2024 is a Monday
+	referenceTime := time.Date(2024, time.January, 1, 12, 0, 0, 0, time.UTC)
 
 	// Mock rows to be returned by the query
 	rows := sqlmock.NewRows([]string{"LockType", "StartTimestamp", "EndTimestamp", "RecurInterval", "DayOfWeek", "DayOfMonth", "RecurStartTime", "RecurEndTime"}).
-		AddRow("TestLock", queryTime.Add(-time.Hour), queryTime.Add(time.Hour), "None", 0, 0, queryTime.Add(-time.Hour), queryTime.Add(time.Hour)).                          // Matches
-		AddRow("TestLock", queryTime.Add(-2*time.Hour), queryTime.Add(-time.Hour), "None", 0, 0, queryTime.Add(-2*time.Hour), queryTime.Add(-time.Hour)).                    // Does not match
-		AddRow("TestLock", queryTime.Add(time.Hour), queryTime.Add(2*time.Hour), "None", 0, 0, queryTime.Add(time.Hour), queryTime.Add(2*time.Hour)).                        // Does not match
-		AddRow("TestLock", queryTime.Add(-time.Hour), queryTime.Add(time.Hour), "Daily", 0, 0, queryTime.Add(-time.Hour), queryTime.Add(time.Hour)).                         // Matches
-		AddRow("TestLock", queryTime.Add(-time.Hour), queryTime.Add(time.Hour), "Weekly", int(queryTime.Weekday()), 0, queryTime.Add(-time.Hour), queryTime.Add(time.Hour)). // Matches
-		AddRow("TestLock", queryTime.Add(-time.Hour), queryTime.Add(time.Hour), "Monthly", 0, queryTime.Day(), queryTime.Add(-time.Hour), queryTime.Add(time.Hour)).         // Matches
-		AddRow("TestLock", queryTime.Add(-time.Hour), queryTime.Add(time.Hour), "Weekly", 5, 0, queryTime.Add(-time.Hour), queryTime.Add(time.Hour)).                        // Matches (Friday)
-		AddRow("TestLock", queryTime.Add(-time.Hour), queryTime.Add(time.Hour), "Monthly", 0, 1, queryTime.Add(-time.Hour), queryTime.Add(time.Hour))                        // Matches (1st of the month)
+		AddRow("Matches", referenceTime.Add(-time.Hour), referenceTime.Add(time.Hour), "None", 0, 0, referenceTime.Add(-time.Hour), referenceTime.Add(time.Hour)).                              // Matches
+		AddRow("NoMatch", referenceTime.Add(-2*time.Hour), referenceTime.Add(-time.Hour), "None", 0, 0, referenceTime.Add(-2*time.Hour), referenceTime.Add(-time.Hour)).                        // Does not match
+		AddRow("NoMatch", referenceTime.Add(time.Hour), referenceTime.Add(2*time.Hour), "None", 0, 0, referenceTime.Add(time.Hour), referenceTime.Add(2*time.Hour)).                            // Does not match
+		AddRow("Matches", referenceTime.Add(-time.Hour), referenceTime.Add(time.Hour), "Daily", 0, 0, referenceTime.Add(-time.Hour), referenceTime.Add(time.Hour)).                             // Matches
+		AddRow("Matches", referenceTime.Add(-time.Hour), referenceTime.Add(time.Hour), "Weekly", int(referenceTime.Weekday()), 0, referenceTime.Add(-time.Hour), referenceTime.Add(time.Hour)). // Matches
+		AddRow("Matches", referenceTime.Add(-time.Hour), referenceTime.Add(time.Hour), "Monthly", 0, referenceTime.Day(), referenceTime.Add(-time.Hour), referenceTime.Add(time.Hour)).         // Matches
+		AddRow("NoMatch", referenceTime.Add(-time.Hour), referenceTime.Add(time.Hour), "Weekly", 5, 0, referenceTime.Add(-time.Hour), referenceTime.Add(time.Hour)).                            // Does not match (Friday)
+		AddRow("NoMatch", referenceTime.Add(-time.Hour), referenceTime.Add(time.Hour), "Monthly", 0, 2, referenceTime.Add(-time.Hour), referenceTime.Add(time.Hour))                            // Does not match (2nd of the month)
 
 	mock.ExpectQuery(escapeRegexChars(checkStateMachineTypeLockSQL())).
-		WithArgs(stateMachineType, queryTime, queryTime).
+		WithArgs(stateMachineType, referenceTime, referenceTime).
 		WillReturnRows(rows)
 
-	locks, err := checkStateMachineTypeLock(db, stateMachineType, queryTime)
+	locks, err := checkStateMachineTypeLock(db, stateMachineType, referenceTime)
 	if err != nil {
 		t.Errorf("error was not expected while checking locks: %s", err)
 	}
 
-	// Determine the expected number of matching locks
-	expectedLockCount := 4             // One-time lock and daily recurring lock always match
-	if int(queryTime.Weekday()) == 5 { // Add weekly lock if today is the correct weekday
-		expectedLockCount++
-	}
-	if queryTime.Day() == 1 { // Add monthly lock if today is the correct day of the month
-		expectedLockCount++
-	}
+	expectedLockCount := 4 // Only the first, fourth, fifth, and sixth rows match
 
-	// Check if the returned locks slice contains the expected data
 	if len(locks) != expectedLockCount {
 		t.Errorf("expected %d locks, got %d", expectedLockCount, len(locks))
 	}

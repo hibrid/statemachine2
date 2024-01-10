@@ -1,5 +1,12 @@
 package statemachine
 
+import "go.uber.org/zap"
+
+type ExecuteForwardFunc func(data map[string]interface{}, transitionHistory []TransitionHistory) (ForwardEvent, map[string]interface{}, error)
+type ExecuteBackwardFunc func(data map[string]interface{}, transitionHistory []TransitionHistory) (BackwardEvent, map[string]interface{}, error)
+type ExecutePauseFunc func(data map[string]interface{}, transitionHistory []TransitionHistory) (PauseEvent, map[string]interface{}, error)
+type ExecuteResumeFunc func(data map[string]interface{}, transitionHistory []TransitionHistory) (ResumeEvent, map[string]interface{}, error)
+
 // StepHandler defines the interface for state machine handlers.
 type StepHandler interface {
 	Name() string
@@ -11,6 +18,8 @@ type StepHandler interface {
 
 // completeHandler is a default handler that does nothing but complete the state machine.
 type completeHandler struct {
+	Logger *zap.Logger
+	StepHandler
 }
 
 func (handler *completeHandler) Name() string {
@@ -39,6 +48,8 @@ func (dh *completeHandler) ExecuteResume(data map[string]interface{}, transition
 
 // completeHandler is a default handler that does nothing but complete the state machine.
 type cancelHandler struct {
+	Logger *zap.Logger
+	StepHandler
 }
 
 func (handler *cancelHandler) Name() string {
@@ -63,4 +74,60 @@ func (dh *cancelHandler) ExecutePause(data map[string]interface{}, transitionHis
 func (dh *cancelHandler) ExecuteResume(data map[string]interface{}, transitionHistory []TransitionHistory) (ResumeEvent, map[string]interface{}, error) {
 	// Implement backward action logic here.
 	return ResumeCancel, data, nil
+}
+
+type BaseStepHandler struct {
+	Logger *zap.Logger
+	ExecuteForwardFunc
+	ExecuteBackwardFunc
+	ExecutePauseFunc
+	ExecuteResumeFunc
+	NameFunc func() string
+}
+
+func (b *BaseStepHandler) Name() string {
+	if b.NameFunc != nil {
+		return b.NameFunc()
+	}
+	return "BaseStepHandler"
+}
+
+// Implement the StepHandler interface using the function fields
+func (b *BaseStepHandler) ExecuteForward(data map[string]interface{}, transitionHistory []TransitionHistory) (ForwardEvent, map[string]interface{}, error) {
+	return b.ExecuteForwardFunc(data, transitionHistory)
+}
+
+func (b *BaseStepHandler) ExecuteBackward(data map[string]interface{}, transitionHistory []TransitionHistory) (BackwardEvent, map[string]interface{}, error) {
+	return b.ExecuteBackwardFunc(data, transitionHistory)
+}
+
+func (b *BaseStepHandler) ExecutePause(data map[string]interface{}, transitionHistory []TransitionHistory) (PauseEvent, map[string]interface{}, error) {
+	return b.ExecutePauseFunc(data, transitionHistory)
+}
+
+func (b *BaseStepHandler) ExecuteResume(data map[string]interface{}, transitionHistory []TransitionHistory) (ResumeEvent, map[string]interface{}, error) {
+	return b.ExecuteResumeFunc(data, transitionHistory)
+}
+
+func (b *BaseStepHandler) SetLogger(logger *zap.Logger) {
+	b.Logger = logger
+}
+
+// Constructor function for BaseStepHandler
+func NewStep(
+	name string,
+	logger *zap.Logger,
+	executeForward ExecuteForwardFunc,
+	executeBackward ExecuteBackwardFunc,
+	executePause ExecutePauseFunc,
+	executeResume ExecuteResumeFunc,
+) *BaseStepHandler {
+	return &BaseStepHandler{
+		NameFunc:            func() string { return name },
+		Logger:              logger,
+		ExecuteForwardFunc:  executeForward,
+		ExecuteBackwardFunc: executeBackward,
+		ExecutePauseFunc:    executePause,
+		ExecuteResumeFunc:   executeResume,
+	}
 }

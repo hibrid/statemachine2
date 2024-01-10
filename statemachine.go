@@ -26,7 +26,7 @@ type StateCallbacks struct {
 type StateMachine struct {
 	Name                          string                    `json:"name"`
 	UniqueID                      string                    `json:"id"`
-	Handlers                      []StepHandler             `json:"-"` // List of handlers with names
+	Handlers                      []BaseStepHandler         `json:"-"` // List of handlers with names
 	Callbacks                     map[string]StateCallbacks `json:"-"`
 	CurrentState                  State                     `json:"currentState"`
 	DB                            *sql.DB                   `json:"-"`
@@ -76,10 +76,11 @@ type StateMachineConfig struct {
 	KafkaProducer        *kafka.Producer
 	KafkaEventTopic      string
 	ExecuteSynchronously bool
-	Handlers             []StepHandler
+	Handlers             []BaseStepHandler
 	RetryPolicy          RetryPolicy
 	LockType             LockType
 	Context              context.Context
+	Logger               *zap.Logger
 }
 
 // Save the state machine's serialized JSON to the database
@@ -106,16 +107,19 @@ func (sm *StateMachine) processStateMachine(context *Context) error {
 		sm.CurrentArbitraryData = make(map[string]interface{})
 	}
 
-	var handler StepHandler
+	var handler BaseStepHandler
 	// Let's check if this is a success and we are done
 	if sm.ResumeFromStep >= len(sm.Handlers) || sm.ResumeFromStep < 0 {
-		handler = &completeHandler{}
+		completeHandler := &completeHandler{Logger: sm.Log}
+		handler = *NewStep("Default Completion Handler", sm.Log, completeHandler.ExecuteForward, completeHandler.ExecuteBackward, completeHandler.ExecutePause, completeHandler.ExecuteResume)
 	} else {
 		handler = sm.Handlers[sm.ResumeFromStep]
 	}
 
 	if err := sm.contextCancelled(); err != nil {
-		handler = &cancelHandler{}
+		//handler = &cancelHandler{Logger: sm.Log}
+		cancelHandler := &cancelHandler{Logger: sm.Log}
+		handler = *NewStep("Default Cancellation Handler", sm.Log, cancelHandler.ExecuteForward, cancelHandler.ExecuteBackward, cancelHandler.ExecutePause, cancelHandler.ExecuteResume)
 	}
 
 	context.Handler = handler
@@ -604,6 +608,11 @@ func NewStateMachine(config StateMachineConfig) (*StateMachine, error) {
 		BaseDelay:                     config.RetryPolicy.BaseDelay,
 		UnlockGlobalLockAfterEachStep: true,
 		Context:                       context.Background(),
+		Log:                           zap.NewNop(), // you should set your own logger
+	}
+
+	if config.Logger != nil {
+		sm.Log = config.Logger
 	}
 
 	if config.Context != nil {
@@ -764,7 +773,7 @@ func (sm *StateMachine) SetState(newState State, event Event) error {
 }
 
 // AddStep adds a handler to the state machine.
-func (sm *StateMachine) AddStep(handler StepHandler, name string) *StateMachine {
+func (sm *StateMachine) AddStep(handler BaseStepHandler, name string) *StateMachine {
 	sm.Handlers = append(sm.Handlers, handler)
 	return sm
 }

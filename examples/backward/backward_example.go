@@ -6,6 +6,7 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
+	"go.uber.org/zap"
 
 	statemachine "github.com/hibrid/statemachine2"
 )
@@ -15,6 +16,10 @@ type Step1 struct {
 
 func (handler *Step1) Name() string {
 	return "The First Step" // Provide a default name for the handler
+}
+
+func (handler *Step1) GetLogger() *zap.Logger {
+	return nil
 }
 
 func (handler *Step1) ExecuteForward(data map[string]interface{}, transitionHistory []statemachine.TransitionHistory) (statemachine.ForwardEvent, map[string]interface{}, error) {
@@ -51,6 +56,10 @@ type Step2 struct {
 
 func (handler *Step2) Name() string {
 	return "Step Dos" // Provide a default name for the handler
+}
+
+func (handler *Step2) GetLogger() *zap.Logger {
+	return nil
 }
 
 func (handler *Step2) ExecuteForward(data map[string]interface{}, transitionHistory []statemachine.TransitionHistory) (statemachine.ForwardEvent, map[string]interface{}, error) {
@@ -141,9 +150,11 @@ func main() {
 		AfterTheStep:  leaveStateCallback,
 	})
 	primero := &Step1{}
-	sm.AddStep(primero, primero.Name())
+	step1 := statemachine.NewStep(primero.Name(), zap.NewNop(), primero.ExecuteForward, primero.ExecuteBackward, primero.ExecutePause, primero.ExecuteResume)
+	sm.AddStep(*step1, primero.Name())
 	segundo := &Step2{}
-	sm.AddStep(segundo, segundo.Name())
+	step2 := statemachine.NewStep(segundo.Name(), zap.NewNop(), segundo.ExecuteForward, segundo.ExecuteBackward, segundo.ExecutePause, segundo.ExecuteResume)
+	sm.AddStep(*step2, segundo.Name())
 
 	err = sm.Run()
 	if err != nil {

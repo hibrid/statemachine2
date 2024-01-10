@@ -9,9 +9,14 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"go.uber.org/zap"
 )
 
 type TestHandler struct {
+}
+
+func (handler *TestHandler) GetLogger() *zap.Logger {
+	return nil
 }
 
 func (handler *TestHandler) Name() string {
@@ -46,6 +51,10 @@ func (handler *TestHandler) ExecuteCancel(data map[string]interface{}, transitio
 type TestHandler2 struct {
 }
 
+func (handler *TestHandler2) GetLogger() *zap.Logger {
+	return nil
+}
+
 func (handler *TestHandler2) Name() string {
 	return "TestHandler2" // Provide a default name for the handler
 }
@@ -76,6 +85,10 @@ func (handler *TestHandler2) ExecuteCancel(data map[string]interface{}, transiti
 }
 
 type BackwardTestHandler struct {
+}
+
+func (handler *BackwardTestHandler) GetLogger() *zap.Logger {
+	return nil
 }
 
 func (handler *BackwardTestHandler) Name() string {
@@ -110,6 +123,10 @@ func (handler *BackwardTestHandler) ExecuteCancel(data map[string]interface{}, t
 type ForwardRetryTestHandler struct {
 }
 
+func (handler *ForwardRetryTestHandler) GetLogger() *zap.Logger {
+	return nil
+}
+
 func (handler *ForwardRetryTestHandler) Name() string {
 	return "ForwardRetryTestHandler" // Provide a default name for the handler
 }
@@ -140,6 +157,10 @@ func (handler *ForwardRetryTestHandler) ExecuteCancel(data map[string]interface{
 }
 
 type BackwardRetryTestHandler struct {
+}
+
+func (handler *BackwardRetryTestHandler) GetLogger() *zap.Logger {
+	return nil
 }
 
 func (handler *BackwardRetryTestHandler) Name() string {
@@ -661,14 +682,16 @@ func TestStateMachine_Forward_Global_Lock_Run_Integration(t *testing.T) {
 		t.Fatalf("an error '%s' was not expected when opening a stub database connection", err)
 	}
 	defer db.Close()
-
+	testHandler := &TestHandler{}
+	testHandler2 := &TestHandler2{}
 	// Initialize StateMachine with necessary configuration
 	config := StateMachineConfig{
 		Name:                 "testing",
 		UniqueStateMachineID: "test1",
 		LookupKey:            "5",
 		DB:                   db,
-		Handlers:             []StepHandler{&TestHandler{}, &TestHandler2{}},
+		//Handlers:             []BaseStepHandler{&TestHandler{}, &TestHandler2{}},
+		Handlers:             []BaseStepHandler{*NewStep(testHandler.Name(), zap.NewNop(), testHandler.ExecuteForward, testHandler.ExecuteBackward, testHandler.ExecutePause, testHandler.ExecuteResume), *NewStep(testHandler2.Name(), zap.NewNop(), testHandler2.ExecuteForward, testHandler2.ExecuteBackward, testHandler2.ExecutePause, testHandler2.ExecuteResume)},
 		ExecuteSynchronously: true,
 		RetryPolicy: RetryPolicy{
 			MaxTimeout: 10 * time.Second,
@@ -800,14 +823,16 @@ func TestStateMachine_Forward_Run_Context_Cancelled_Integration(t *testing.T) {
 	defer db.Close()
 
 	context, cancel := context.WithCancel(context.Background())
-
+	testHandler := &TestHandler{}
+	testHandler2 := &TestHandler2{}
 	// Initialize StateMachine with necessary configuration
 	config := StateMachineConfig{
 		Name:                 "testing",
 		UniqueStateMachineID: "test1",
 		LookupKey:            "5",
 		DB:                   db,
-		Handlers:             []StepHandler{&TestHandler{}, &TestHandler2{}},
+		//Handlers:             []StepHandler{&TestHandler{}, &TestHandler2{}},
+		Handlers:             []BaseStepHandler{*NewStep(testHandler.Name(), zap.NewNop(), testHandler.ExecuteForward, testHandler.ExecuteBackward, testHandler.ExecutePause, testHandler.ExecuteResume), *NewStep(testHandler2.Name(), zap.NewNop(), testHandler2.ExecuteForward, testHandler2.ExecuteBackward, testHandler2.ExecutePause, testHandler2.ExecuteResume)},
 		ExecuteSynchronously: true,
 		RetryPolicy: RetryPolicy{
 			MaxTimeout: 10 * time.Second,
@@ -930,13 +955,17 @@ func TestStateMachine_Forward_Run_Integration(t *testing.T) {
 	}
 	defer db.Close()
 
+	testHandler := &TestHandler{}
+	testHandler2 := &TestHandler2{}
+
 	// Initialize StateMachine with necessary configuration
 	config := StateMachineConfig{
 		Name:                 "testing",
 		UniqueStateMachineID: "test1",
 		LookupKey:            "5",
 		DB:                   db,
-		Handlers:             []StepHandler{&TestHandler{}, &TestHandler2{}},
+		//Handlers:             []StepHandler{&TestHandler{}, &TestHandler2{}},
+		Handlers:             []BaseStepHandler{*NewStep(testHandler.Name(), zap.NewNop(), testHandler.ExecuteForward, testHandler.ExecuteBackward, testHandler.ExecutePause, testHandler.ExecuteResume), *NewStep(testHandler2.Name(), zap.NewNop(), testHandler2.ExecuteForward, testHandler2.ExecuteBackward, testHandler2.ExecutePause, testHandler2.ExecuteResume)},
 		ExecuteSynchronously: true,
 		RetryPolicy: RetryPolicy{
 			MaxTimeout: 10 * time.Second,
@@ -1068,14 +1097,16 @@ func TestStateMachine_Machine_Lock_Sleep_Integration(t *testing.T) {
 		t.Fatalf("an error '%s' was not expected when opening a stub database connection", err)
 	}
 	defer db.Close()
-
+	testHandler := &TestHandler{}
+	testHandler2 := &TestHandler2{}
 	// Initialize StateMachine with necessary configuration
 	config := StateMachineConfig{
 		Name:                 "testing",
 		UniqueStateMachineID: "test1",
 		LookupKey:            "5",
 		DB:                   db,
-		Handlers:             []StepHandler{&TestHandler{}, &TestHandler2{}},
+		//Handlers:             []StepHandler{&TestHandler{}, &TestHandler2{}},
+		Handlers:             []BaseStepHandler{*NewStep(testHandler.Name(), zap.NewNop(), testHandler.ExecuteForward, testHandler.ExecuteBackward, testHandler.ExecutePause, testHandler.ExecuteResume), *NewStep(testHandler2.Name(), zap.NewNop(), testHandler2.ExecuteForward, testHandler2.ExecuteBackward, testHandler2.ExecutePause, testHandler2.ExecuteResume)},
 		ExecuteSynchronously: true,
 		RetryPolicy: RetryPolicy{
 			MaxTimeout: 10 * time.Second,
@@ -1175,14 +1206,16 @@ func TestStateMachine_Backward_Run_Integration(t *testing.T) {
 		t.Fatalf("an error '%s' was not expected when opening a stub database connection", err)
 	}
 	defer db.Close()
-
+	testHandler := &TestHandler{}
+	testHandler2 := &BackwardTestHandler{}
 	// Initialize StateMachine with necessary configuration
 	config := StateMachineConfig{
 		Name:                 "testing",
 		UniqueStateMachineID: "test1",
 		LookupKey:            "5",
 		DB:                   db,
-		Handlers:             []StepHandler{&TestHandler{}, &BackwardTestHandler{}},
+		//Handlers:             []StepHandler{&TestHandler{}, &BackwardTestHandler{}},
+		Handlers:             []BaseStepHandler{*NewStep(testHandler.Name(), zap.NewNop(), testHandler.ExecuteForward, testHandler.ExecuteBackward, testHandler.ExecutePause, testHandler.ExecuteResume), *NewStep(testHandler2.Name(), zap.NewNop(), testHandler2.ExecuteForward, testHandler2.ExecuteBackward, testHandler2.ExecutePause, testHandler2.ExecuteResume)},
 		ExecuteSynchronously: true,
 		RetryPolicy: RetryPolicy{
 			MaxTimeout: 10 * time.Second,
@@ -1341,13 +1374,17 @@ func TestStateMachine_Forward_Retry_Run_Integration(t *testing.T) {
 	}
 	defer db.Close()
 
+	testHandler := &TestHandler{}
+	testHandler2 := &ForwardRetryTestHandler{}
+
 	// Initialize StateMachine with necessary configuration
 	config := StateMachineConfig{
 		Name:                 "testing",
 		UniqueStateMachineID: "test1",
 		LookupKey:            "5",
 		DB:                   db,
-		Handlers:             []StepHandler{&TestHandler{}, &ForwardRetryTestHandler{}},
+		//Handlers:             []StepHandler{&TestHandler{}, &ForwardRetryTestHandler{}},
+		Handlers:             []BaseStepHandler{*NewStep(testHandler.Name(), zap.NewNop(), testHandler.ExecuteForward, testHandler.ExecuteBackward, testHandler.ExecutePause, testHandler.ExecuteResume), *NewStep(testHandler2.Name(), zap.NewNop(), testHandler2.ExecuteForward, testHandler2.ExecuteBackward, testHandler2.ExecutePause, testHandler2.ExecuteResume)},
 		ExecuteSynchronously: true,
 		RetryPolicy: RetryPolicy{
 			MaxTimeout: 10 * time.Second,
@@ -1511,13 +1548,17 @@ func TestStateMachine_Backward_Retry_Run_Integration(t *testing.T) {
 	}
 	defer db.Close()
 
+	testHandler := &TestHandler{}
+	testHandler2 := &BackwardRetryTestHandler{}
+
 	// Initialize StateMachine with necessary configuration
 	config := StateMachineConfig{
 		Name:                 "testing",
 		UniqueStateMachineID: "test1",
 		LookupKey:            "5",
 		DB:                   db,
-		Handlers:             []StepHandler{&TestHandler{}, &BackwardRetryTestHandler{}},
+		//Handlers:             []StepHandler{&TestHandler{}, &BackwardRetryTestHandler{}},
+		Handlers:             []BaseStepHandler{*NewStep(testHandler.Name(), zap.NewNop(), testHandler.ExecuteForward, testHandler.ExecuteBackward, testHandler.ExecutePause, testHandler.ExecuteResume), *NewStep(testHandler2.Name(), zap.NewNop(), testHandler2.ExecuteForward, testHandler2.ExecuteBackward, testHandler2.ExecutePause, testHandler2.ExecuteResume)},
 		ExecuteSynchronously: true,
 		RetryPolicy: RetryPolicy{
 			MaxTimeout: 10 * time.Second,
@@ -1840,8 +1881,10 @@ func TestStateMachine_Resume(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		testHandler := &TestHandler{}
+		handler := NewStep("test", zap.NewNop(), testHandler.ExecuteForward, testHandler.ExecuteBackward, testHandler.ExecutePause, testHandler.ExecuteResume)
 		t.Run(tt.name, func(t *testing.T) {
-			sm := &StateMachine{CurrentState: tt.currentState, Handlers: []StepHandler{&TestHandler{}}, Context: context.Background()}
+			sm := &StateMachine{CurrentState: tt.currentState, Handlers: []BaseStepHandler{*handler}, Context: context.Background()}
 
 			err := sm.Resume()
 			if (err != nil) != tt.expectError {
@@ -1893,8 +1936,10 @@ func TestStateMachine_Rollback(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		testHandler := &TestHandler{}
+		handler := NewStep("test", zap.NewNop(), testHandler.ExecuteForward, testHandler.ExecuteBackward, testHandler.ExecutePause, testHandler.ExecuteResume)
 		t.Run(tt.name, func(t *testing.T) {
-			sm := &StateMachine{CurrentState: tt.currentState, Handlers: []StepHandler{&TestHandler{}}, Context: context.Background()}
+			sm := &StateMachine{CurrentState: tt.currentState, Handlers: []BaseStepHandler{*handler}, Context: context.Background()}
 
 			err := sm.Rollback()
 			if (err != nil) != tt.expectError {
