@@ -219,7 +219,7 @@ func (sm *StateMachine) handleAsynchronousExecution(context *Context) error {
 }
 
 func (sm *StateMachine) handleSynchoronousExecution(context *Context) error {
-	if !IsTerminalState(sm.CurrentState) && sm.ExecuteSynchronously {
+	if !IsTerminalState(sm.CurrentState) && sm.ExecuteSynchronously && sm.CurrentState != StatePaused {
 		return sm.Run()
 	}
 	return nil

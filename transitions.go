@@ -21,6 +21,7 @@ var ValidTransitions = map[State]map[Event][]State{
 		OnFailed:    []State{StateFailed},
 		OnCancelled: []State{StateCancelled},
 		OnLock:      []State{StateLocked},
+		OnPause:     []State{StatePaused},
 
 		OnUnknownSituation: []State{StateParked},
 	},
