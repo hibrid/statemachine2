@@ -30,13 +30,19 @@ func (e *StateMachineError) Error() string {
 type UnexpectedEventTypeError struct {
 	StateMachineError
 	EventType string
+	Inner     error
 }
 
-func NewUnexpectedEventTypeError(eventType string) *UnexpectedEventTypeError {
+func NewUnexpectedEventTypeError(inner error, eventType string) *UnexpectedEventTypeError {
 	return &UnexpectedEventTypeError{
 		StateMachineError: StateMachineError{Msg: fmt.Sprintf("unexpected event type: %s", eventType)},
 		EventType:         eventType,
+		Inner:             inner,
 	}
+}
+
+func (e *UnexpectedEventTypeError) Unwrap() error {
+	return e.Inner
 }
 
 // RestartExecutionError indicates an error in restarting execution from a terminal state.
@@ -55,22 +61,30 @@ func NewRestartExecutionError(state State) *RestartExecutionError {
 // ExecutionActionError indicates an error in determining the execution action.
 type ExecutionActionError struct {
 	StateMachineError
+	Inner error
 }
 
-func NewExecutionActionError(msg string) *ExecutionActionError {
+func NewExecutionActionError(inner error, msg string) *ExecutionActionError {
 	return &ExecutionActionError{
 		StateMachineError: StateMachineError{Msg: fmt.Sprintf("Execution Action Error: %s", msg)},
+		Inner:             inner,
 	}
+}
+
+func (e *ExecutionActionError) Unwrap() error {
+	return e.Inner
 }
 
 // HandlingContextError indicates an error in handling the context.
 type HandlingContextError struct {
 	StateMachineError
+	Inner error
 }
 
-func NewHandlingContextError(msg string) *HandlingContextError {
+func NewHandlingContextError(inner error, msg string) *HandlingContextError {
 	return &HandlingContextError{
 		StateMachineError: StateMachineError{Msg: fmt.Sprintf("Handling Context Error: %s", msg)},
+		Inner:             inner,
 	}
 }
 
@@ -137,7 +151,7 @@ func DetermineExecutionAction(inputArbitraryData map[string]interface{}, smCtx *
 			// Convert it to a generic event
 			convertedEvent = forwardEvent.ToEvent()
 		} else {
-			return OnError, NewUnexpectedEventTypeError(fmt.Sprintf("%T", executionEvent))
+			return OnError, NewUnexpectedEventTypeError(err, fmt.Sprintf("%T", executionEvent))
 		}
 	case StatePaused:
 		executionEvent, outputData, err = smCtx.Handler.ExecutePause(inputArbitraryData, smCtx.TransitionHistory)
@@ -148,7 +162,7 @@ func DetermineExecutionAction(inputArbitraryData map[string]interface{}, smCtx *
 			convertedEvent = pauseEvent.ToEvent()
 		} else {
 			// Handle the error or unexpected type
-			return OnError, NewUnexpectedEventTypeError(fmt.Sprintf("%T", executionEvent))
+			return OnError, NewUnexpectedEventTypeError(err, fmt.Sprintf("%T", executionEvent))
 		}
 	case StateRollback:
 		executionEvent, outputData, err = smCtx.Handler.ExecuteBackward(inputArbitraryData, smCtx.TransitionHistory)
@@ -159,7 +173,7 @@ func DetermineExecutionAction(inputArbitraryData map[string]interface{}, smCtx *
 			convertedEvent = backwardEvent.ToEvent()
 		} else {
 			// Handle the error or unexpected type
-			return OnError, NewUnexpectedEventTypeError(fmt.Sprintf("%T", executionEvent))
+			return OnError, NewUnexpectedEventTypeError(err, fmt.Sprintf("%T", executionEvent))
 		}
 	case StateResume:
 		executionEvent, outputData, err = smCtx.Handler.ExecuteResume(inputArbitraryData, smCtx.TransitionHistory)
@@ -170,7 +184,7 @@ func DetermineExecutionAction(inputArbitraryData map[string]interface{}, smCtx *
 			convertedEvent = resumeEvent.ToEvent()
 		} else {
 			// Handle the error or unexpected type
-			return OnError, NewUnexpectedEventTypeError(fmt.Sprintf("%T", executionEvent))
+			return OnError, NewUnexpectedEventTypeError(err, fmt.Sprintf("%T", executionEvent))
 		}
 
 	default: // not sure what happened so let's park it
@@ -234,7 +248,7 @@ func (smCtx *Context) Handle() (executionEvent Event, err error) {
 
 		if finishErr := smCtx.finishHandlingContext(executionEvent, smCtx.InputArbitraryData, outputArbitraryData); finishErr != nil {
 			// Wrap the error from finishHandlingContext with custom error type
-			err = NewHandlingContextError(finishErr.Error())
+			err = NewHandlingContextError(finishErr, finishErr.Error())
 			executionEvent = OnError
 		}
 	}()
@@ -242,7 +256,7 @@ func (smCtx *Context) Handle() (executionEvent Event, err error) {
 	executionEvent, err = DetermineExecutionAction(inputArbitraryData, smCtx)
 	if err != nil {
 		// Wrap the error from DetermineExecutionAction with custom error type
-		err = NewExecutionActionError(err.Error())
+		err = NewExecutionActionError(err, err.Error())
 		return executionEvent, err
 	}
 	outputArbitraryData = CopyMap(smCtx.OutputArbitraryData)
