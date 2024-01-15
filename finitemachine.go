@@ -2,6 +2,7 @@ package statemachine
 
 import (
 	"fmt"
+	"runtime"
 )
 
 // Context represents the context of the state machine.
@@ -241,8 +242,13 @@ func (smCtx *Context) Handle() (executionEvent Event, err error) {
 
 	defer func() {
 		if r := recover(); r != nil {
-			// Convert the panic to an error and wrap it
-			err = fmt.Errorf("panic occurred in Handle: %v", r)
+			// Capture the stack trace
+			stackTrace := make([]byte, 1024)
+			length := runtime.Stack(stackTrace, false)
+			stackTrace = stackTrace[:length]
+
+			// Convert the panic to an error and wrap it, including the stack trace
+			err = fmt.Errorf("panic occurred in Handle: %v\nStack Trace: %s", r, stackTrace)
 			executionEvent = OnError
 		}
 
