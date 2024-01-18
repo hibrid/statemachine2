@@ -1,0 +1,16 @@
+apiVersion: v2
+description: A Helm chart for statemachine2
+name: statemachine2
+version: 0.15.24
+dependencies:
+  - name: forward
+    version: 0.1.0
+    repository: "file://./charts/forward"
+  - name: kafka
+    version: 0.1.0
+    repository: "file://./charts/kafka"
+maintainers:
+  - name: gilbert mena
+    email: gilbert@gmena.net
+    url: https://github.com/hibrid
+home: https://github.com/hibrid/statemachine2/examples

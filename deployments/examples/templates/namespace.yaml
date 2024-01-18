@@ -1,0 +1,11 @@
+{{- if .Values.statemachine2.namespace.create }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Release.Namespace }}
+  labels:
+{{ include "charts.labels.standard" .}}
+  annotations:
+    {{- .Values.statemachine2.namespace.annotations | toYaml | nindent 4 }}
+{{- end }}

@@ -1,0 +1,92 @@
+# Create an empty `local/Tiltconfig.yaml` and copy over any other services and update as needed
+# To run local development images for the tidepool services, uncomment the `image` and `hostPath`
+# parameters, and update the `hostPath` if you've checked the repo out to a different location.
+
+### Global Config Start ###
+global:
+  glooingress:
+    enabled: true
+    jwt:
+      disabled: true
+    extauth:
+      enabled: false
+  gateway:
+    default:
+      protocol: http
+      host: localhost:31500
+      domain: localhost
+    proxy:
+      name: gateway-proxy
+      namespace: default
+      targetPort: 0
+  linkerdsupport:
+    enabled: false
+  kafka:
+    connect:
+      enabled: true
+      tlsEnabled: false
+      replicas: 1
+      mongoConnectionUri: ${directory:/opt/kafka/external-configuration/connector-config:Scheme}://${directory:/opt/kafka/external-configuration/connector-config:Addresses}/?ssl=${directory:/opt/kafka/external-configuration/connector-config:Tls}
+    passwordKeyName: password
+### Global Config End ###
+
+### Kafka config start ###
+kafka:
+  configmap:
+    enabled: true
+    Brokers: "kafka-kafka-bootstrap:9092"
+    RequireSSL: "false"
+    TopicPrefix: "default-"
+    Username: "kafka"
+  podMonitor:
+    enabled: false
+### Kafka API Config End ###
+
+
+
+### Gateway Config Start ###
+glooingress:
+  enabled: true
+  virtualServices:
+    http:
+      name: "internal"
+      dnsNames: ["*"]
+      port: "31500"
+      options:
+        cors:
+          allowCredentials: true
+          allowHeaders:
+          - authorization
+          - content-type
+          - x-statemachine2-session-token
+          - x-statemachine2-trace-request
+          - x-statemachine2-trace-session
+          allowMethods:
+          - GET
+          - POST
+          - PUT
+          - PATCH
+          - DELETE
+          - OPTIONS
+          allowOriginRegex:
+          - .*
+          exposeHeaders:
+          - x-statemachine2-session-token
+          - x-statemachine2-trace-request
+          - x-statemachine2-trace-session
+          maxAge: 600s
+
+apiServer:
+  enable: false
+### Gateway Config End ###
+
+### Statemachine Services Config End ###
+forward:
+  deployment:
+    # image: statemachine-go-image # Uncomment to build and run local image or a specific remote image
+  # hostPath: ~/go/src/github.com/hibrid/statemachine2      # Uncomment to build and run local image
+  containerPath: '/go/src/github.com/hibrid/statemachine2/deployments/examples/forward'
+  dockerFile: 'Dockerfile'
+  rebuildCommand: 'SERVICE="-o build/statemachine-go ./" make service-build'
+
+### Statemachine Services Config End ###

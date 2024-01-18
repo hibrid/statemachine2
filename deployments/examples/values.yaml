@@ -1,0 +1,75 @@
+global:
+  # -- maximum timeout for any web request
+  maxTimeout: 120s
+  fullnameOverride: ""
+  # -- if non-empty, Helm chart name to use
+  nameOverride: ""
+  # -- aws region that services run in
+  region: "us-west-2"
+  # -- the default log level for all services
+  logLevel: info
+  gateway:
+    default:
+      # -- scheme to use for web service
+      protocol: http
+      # -- hostname of web service
+      host: localhost
+      # -- host to use for API calls
+      apiHost: ""
+      # -- host to use for front end calls
+      appHost: ""
+      # -- domain to use for cookies
+      domain: ""
+    proxy:
+      name: gateway-proxy
+      namespace: gloo-system
+  glooingress:
+    # -- whether to use Gloo API Gateway for ingress
+    enabled: true
+    jwt:
+      disabled: false
+    extauth:
+      enabled: false
+  kafka:
+    connect:
+      # -- whether to generate strimzi resources for CDC
+      enabled: false
+      # -- the name of the kafka connect cluster
+      clusterName: kafka-connect-mongo
+      # -- the number of replicas for the kafka connect cluster
+      replicas: 2
+      # -- max tasks for sink connectors
+      sinkTasksMax: 2
+      # -- max tasks for source connectors
+      sourceTasksMax: 2
+      # -- enable tls
+      tlsEnabled: true
+      # -- mongo connection uri
+      mongoConnectionUri: ${directory:/opt/kafka/external-configuration/connector-config:Scheme}://${directory:/opt/kafka/external-configuration/connector-config:Username}:${directory:/opt/kafka/external-configuration/connector-config:Password}@${directory:/opt/kafka/external-configuration/connector-config:Addresses}/?ssl=${directory:/opt/kafka/external-configuration/connector-config:Tls}
+      # -- mongo source connector heartbeat interval
+      mongoHeartbeatIntervalMs: 60000
+      # -- enable keycloak kafka connector
+      keycloak:
+        enabled: false
+    # -- The password key ref
+    passwordKeyName: "Password"
+  linkerdsupport:
+    # -- whether to include linkerdsupport subchart with Linkerd service profiles
+    enabled: true
+  ports:
+    # -- blip service internal port
+    statemachine2: 8080
+    auth: 8081
+  secret:
+    enabled: false
+    generated: false
+    templated: false
+
+statemachine2:
+  tests:
+    job: "none"
+    enabled: false
+  namespace:
+    create: true
+keycloak:
+  enabled: false

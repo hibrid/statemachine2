@@ -1,0 +1,9 @@
+dependencies:
+- name: forward
+  repository: file://./charts/forward
+  version: 0.1.0
+- name: kafka
+  repository: file://./charts/kafka
+  version: 0.1.0
+digest: sha256:c60c6324cb4c81b68fafd6046eca1a425dd2c6359700dec17859474c054a0c15
+generated: "2024-01-16T20:14:27.529211-06:00"
