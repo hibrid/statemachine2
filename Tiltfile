@@ -1,4 +1,5 @@
 load('Tiltfile.global', 'getAbsoluteDir', 'getNested', 'getConfig', 'getHelmValuesFile', 'getHelmOverridesFile', 'isShutdown')
+load('ext://restart_process', 'docker_build_with_restart')
 
 allow_k8s_contexts('kind-admin@mk')
 
@@ -15,7 +16,9 @@ statemachine2_helm_chart_dir = "./deployments/examples"
 is_shutdown = isShutdown()
 ### Config End ###
 
-
+build_args = dict(
+        build_args = { 'GO_VERSION': '1.20.2'}
+    )
 
 ### Main Start ###
 def main():
@@ -24,6 +27,7 @@ def main():
   statemachine_helm_template = 'helm template --namespace default '
 
   if not is_shutdown:
+    buildDockerImage(build_args)
     updateHelmDependancies()
     provisionClusterRoleBindings()
     provisionServerSecrets()
@@ -82,6 +86,36 @@ def main():
   # Back out of actual provisioning for debugging purposes by uncommenting below
   # fail('NOT YET ;)')
 ### Main End ###
+
+
+
+## Docker Build Start ##
+def buildDockerImage(build_arg):
+  compile_cmd = 'CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -o build/statemachine-go ./examples/forward/forward_example.go'
+  if os.name == 'nt':
+    compile_cmd = 'build.bat'
+
+  local_resource(
+    'statemachine-go-compile',
+    compile_cmd,
+    #deps=['./examples/forward/forward_example.go'],
+    )
+
+  docker_build_with_restart(
+    'statemachine-go-image',
+    '.',
+    entrypoint=['/app/build/statemachine-go'],
+    dockerfile='deployments/examples/charts/forward/Dockerfile',
+    only=[
+      './build',
+    ],
+    live_update=[
+      sync('./build', '/app/build'),
+    ],
+    exit_policy='continue',
+    **build_arg,
+  )
+## Docker Build End ##
 
 ### Helm Dependancies Update Start ###
 def updateHelmDependancies():

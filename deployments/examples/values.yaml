@@ -60,12 +60,23 @@ global:
     # -- blip service internal port
     statemachine2: 8080
     auth: 8081
+    shoreline: 9107
+    mariadb: 3306
   secret:
     enabled: false
     generated: false
     templated: false
+mariadb:
+  auth:
+    rootPassword: "password"
+    password: "password"
+    username: "killbill"
+    database: "statemachine"
 
 statemachine2:
+  secret:
+    data:
+
   tests:
     job: "none"
     enabled: false

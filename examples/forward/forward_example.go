@@ -108,7 +108,7 @@ func leaveStateCallback2(sm *statemachine.StateMachine, ctx *statemachine.Contex
 
 func main() {
 	// create a mysql instance
-	db, err := sql.Open("mysql", "root:killbill@tcp(127.0.0.1:3306)/statemachine")
+	db, err := sql.Open("mysql", "killbill:password@tcp(st-mariadb.default.svc.cluster.local.:3306)/statemachine")
 	if err != nil {
 		panic(err)
 	}

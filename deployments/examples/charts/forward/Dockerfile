@@ -1,4 +1,4 @@
-FROM ubuntu:latest
+FROM ubuntu:latest as base
 
 ARG GO_VERSION
 ENV GO_VERSION=${GO_VERSION}
@@ -15,6 +15,8 @@ ENV GOPATH /go
 ENV PATH $GOPATH/bin:/usr/local/go/bin:$PATH
 RUN mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 777 "$GOPATH"
 
+FROM base as build
 WORKDIR /app
 ADD build build
+RUN chmod -R 777 build
 ENTRYPOINT build/statemachine-go

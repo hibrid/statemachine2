@@ -1,6 +1,6 @@
 secret:
   # -- whether to create statemachine secret
-  enabled: false
+  enabled: true
   data_:
     # -- plaintext service authorization secret
     ServiceAuth: ""
@@ -13,7 +13,7 @@ deployment:
       username: statemachine
       password: statemachine
       database: statemachine
-      host: localhost
+      host: st-mariadb-o
       port: 3306
     # -- kafka configuration
     kafka:
