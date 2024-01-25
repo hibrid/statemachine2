@@ -11,7 +11,7 @@ import (
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/go-sql-driver/mysql"
-	"github.com/google/uuid"
+	"github.com/gofrs/uuid"
 	"go.uber.org/zap"
 )
 
@@ -735,9 +735,13 @@ func (sm *StateMachine) IsTheStateMachineInATerminalState() bool {
 // GenerateAndSetUniqueID generates a unique ID for the StateMachine and updates the UniqueID field.
 func (sm *StateMachine) GenerateAndSetUniqueID() string {
 	// Generate a unique ID (e.g., UUID)
-	uniqueID := uuid.New().String() // Using UUID as an example
-	sm.UniqueID = uniqueID
-	return uniqueID
+	uniqueID, err := uuid.NewV7() // Using UUID as an example
+	if err != nil {
+		panic(err)
+	}
+
+	sm.UniqueID = uniqueID.String()
+	return uniqueID.String()
 }
 
 // SetUniqueID sets the unique ID for the state machine.
