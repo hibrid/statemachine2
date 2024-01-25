@@ -1,0 +1,12 @@
+dependencies:
+- name: statemachine2-forward-example
+  repository: file://./charts/statemachine2-forward-example
+  version: 0.1.0
+- name: kafka
+  repository: file://./charts/kafka
+  version: 0.1.0
+- name: mariadb
+  repository: file://./charts/mariadb
+  version: 15.1.2
+digest: sha256:791ac2cade52c017ee44a6bf9c2af114521ef570763f189238cf99cf9f35bb3b
+generated: "2024-01-22T15:45:39.255753532-06:00"

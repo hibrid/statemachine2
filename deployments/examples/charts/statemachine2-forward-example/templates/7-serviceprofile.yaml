@@ -1,0 +1,21 @@
+{{ if .Values.linkerdsupport.enabled }}
+apiVersion: linkerd.io/v1alpha2
+kind: ServiceProfile
+metadata:
+  name: forward.{{ .Release.Namespace }}.svc.cluster.local
+  namespace: '{{ .Release.Namespace }}'
+spec:
+  routes:
+  - condition:
+      method: GET
+      pathRegex: /v1/statemachine2/[^/]+/statemachine
+    name: /v1/statemachine2/{id}/statemachines2_get_statemachine
+  - condition:
+      method: POST
+      pathRegex: /v1/statemachine2/[^/]+/statemachine
+    name: /v1/statemachine2/{id}/statemachines2_post_statemachine
+  - condition:
+      method: DELETE
+      pathRegex: /v1/statemachine2/[^/]+/statemachine
+    name: /v1/statemachine2/{id}/statemachines2_delete_statemachine
+{{- end }}

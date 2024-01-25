@@ -1,0 +1,19 @@
+configmap:
+  # -- whether to generate a configmap
+  enabled: true
+  # -- comma-separated list of broker URLs
+  Brokers: ""
+  # -- whether SSL is required for communication
+  RequireSSL: "true"
+  # -- prefix to apply to all topic names
+  TopicPrefix: ""
+  # -- username for scram authentication
+  Username: "kafka"
+  # -- required version of Kafka server
+  Version: "2.5.0"
+kafka:
+  secretName: "kafka"
+secret:
+  enabled: false
+podMonitor:
+  enabled: true

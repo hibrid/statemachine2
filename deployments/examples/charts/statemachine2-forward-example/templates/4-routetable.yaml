@@ -1,0 +1,26 @@
+{{ if .Values.global.glooingress.enabled }}
+apiVersion: gateway.solo.io/v1
+kind: RouteTable
+metadata:
+  name: statemachine2
+  namespace: {{ .Release.Namespace }}
+  labels:
+    namespace: {{ .Release.Namespace }}
+    app: statemachine2
+spec:
+  routes:
+  - matchers:
+    - methods:
+      - GET
+      - POST
+      - DELETE
+      regex: /v1/statemachine2/[^/]+/statemachine
+    routeAction:
+      single:
+        upstream:
+          name: statemachine2
+    routeAction:
+      single:
+        upstream:
+          name: statemachine2
+{{- end }}

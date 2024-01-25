@@ -1,0 +1,62 @@
+secret:
+  # -- whether to create statemachine secret
+  enabled: true
+  data_:
+    # -- plaintext service authorization secret
+    Username: ""
+    Password: ""
+deployment:
+  replicas: 1
+  # -- default Docker image
+  image: statemachine-go-image
+  env:
+    db:
+      name: statemachine
+      host: st-mariadb
+    # -- kafka configuration
+    kafka:
+      # -- kafka brokers
+      brokers: kafka-kafka-0:9092
+      # -- kafka topic prefix
+      topicPrefix: default-
+      # -- kafka username
+      username: kafka
+      # -- kafka password
+      password: password
+      # -- whether to use TLS for kafka
+      tlsEnabled: false
+      # -- whether to require TLS for kafka
+      requireSSL: false
+  serviceAccount:
+    # -- whether to create a service account
+    create: false
+
+# -- memory and cpu resources for pods
+resources: {}
+# -- security context for each pod in deployment
+podSecurityContext: {}
+# -- annotations for each pod in deployment
+podAnnotations: {}
+securityContext: {}
+hpa:
+  # -- whether to create a horizontal pod autoscalers for all pods of given deployment
+  enabled: false
+  # -- minimum number of replicas that HPA will maintain
+  minReplicas: 1
+  # -- maximum number of replicas that HPA will maintain
+  maxReplicas: null
+pdb:
+  # -- whether to apply a pod disruption budget
+  enabled: false
+  minAvailable: "50%"
+kafka:
+  # -- name of the configmap containing the kafka broker and credentials to use
+  configmapName: kafka
+  # -- name of the configmap containing the kafka broker and credentials to use
+  secretName: kafka
+# -- node selector configuration
+nodeSelector: {}
+# -- tolerations
+tolerations: []
+# -- affinity
+affinity: {}

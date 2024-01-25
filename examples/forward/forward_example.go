@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -107,8 +108,9 @@ func leaveStateCallback2(sm *statemachine.StateMachine, ctx *statemachine.Contex
 }
 
 func main() {
+
 	// create a mysql instance
-	db, err := sql.Open("mysql", "root:killbill@tcp(127.0.0.1:3306)/statemachine")
+	db, err := sql.Open("mysql", os.Getenv("DB_USERNAME")+":"+os.Getenv("DB_PASSWORD")+"@tcp("+os.Getenv("DB_HOST")+os.Getenv("DB_PORT")+")/"+os.Getenv("DB_NAME"))
 	if err != nil {
 		panic(err)
 	}
@@ -219,7 +221,7 @@ func main() {
 			fmt.Println("State machine is in a terminal state")
 		}
 	} else if sm.DidStateMachineComplete() {
-		fmt.Println("State machine completed successfully")
+		fmt.Println("Statemachine completed successfully")
 		ipAddress := sm.GetCurrentArbitraryData()["IpAddress"]
 		fmt.Println("The IP Address Assigned is: ", ipAddress.(string))
 	}
