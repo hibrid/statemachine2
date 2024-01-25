@@ -30,7 +30,8 @@ deployment:
   serviceAccount:
     # -- whether to create a service account
     create: false
-
+linkerdsupport:
+  enabled: false
 # -- memory and cpu resources for pods
 resources: {}
 # -- security context for each pod in deployment
