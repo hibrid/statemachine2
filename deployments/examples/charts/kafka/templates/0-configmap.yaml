@@ -13,10 +13,6 @@ data:
 {{ else }}
   TopicPrefix: "{{ .Release.Namespace }}-"
 {{ end }}
-  EmailsTopic: {{ .Values.configmap.EmailsTopic }}
-  MarketoTopic: {{ .Values.configmap.MarketoTopic | default "marketo"}}
-  MetricEventsTopic: {{ .Values.configmap.MetricEventsTopic | default "metric-events" }}
-  MetricEventsKissMetricsDeadLettersTopic: {{ .Values.configmap.MetricEventsKissMetricsDeadLettersTopic }}
   Username: {{ .Values.configmap.Username }}
   Version: {{ .Values.configmap.Version }}
 {{ end }}

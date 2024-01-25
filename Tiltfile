@@ -15,6 +15,20 @@ statemachine2_helm_chart_dir = "./deployments/examples"
 
 is_shutdown = isShutdown()
 ### Config End ###
+local_resource("Kafka-UI Helm Repo", "helm repo add kafka-ui https://provectus.github.io/kafka-ui-charts",trigger_mode=TRIGGER_MODE_MANUAL,auto_init=False, allow_parallel=True)
+
+local_resource("Kafka-UI Install", 'export KAFKA_SECRET=$(kubectl get -o json secret kafka | jq -r \'.data.password | @base64d\'); helm install kafka-ui kafka-ui/kafka-ui --set envs.config.KAFKA_CLUSTERS_0_NAME=kafka-kafka --set envs.config.KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka-kafka-bootstrap:9092  --set envs.config.KAFKA_CLUSTERS_0_PROPERTIES_SASL_JAAS_CONFIG="org.apache.kafka.common.security.scram.ScramLoginModule required username=\"kafka\" password=\"${KAFKA_SECRET}\";" --set envs.config.KAFKA_CLUSTERS_0_PROPERTIES_SECURITY_PROTOCOL=SASL_PLAINTEXT --set envs.config.KAFKA_CLUSTERS_0_PROPERTIES_SASL_MECHANISM=SCRAM-SHA-512 --set envs.config.KAFKA_CLUSTERS_0_PROPERTIES_PROTOCOL=SASL --namespace default',trigger_mode=TRIGGER_MODE_MANUAL,auto_init=False, allow_parallel=True)
+
+local_resource("Kafka-UI Uninstall", 'helm uninstall kafka-ui',trigger_mode=TRIGGER_MODE_MANUAL, auto_init=False, allow_parallel=True)
+local_resource("Kafka-UI Restart", ' kubectl rollout restart deployment/kafka-ui',trigger_mode=TRIGGER_MODE_MANUAL, auto_init=False, allow_parallel=True)
+
+local_resource("Kafka-UI Port Forward", 'export POD_NAME=$(kubectl get pods --namespace default -l "app.kubernetes.io/name=kafka-ui,app.kubernetes.io/instance=kafka-ui" -o jsonpath="{.items[0].metadata.name}") ; kubectl --namespace default port-forward $POD_NAME 8080:8080',
+trigger_mode=TRIGGER_MODE_MANUAL,auto_init=False, allow_parallel=True)
+
+local_resource("Kafka-UI Logs", 'export POD_NAME=$(kubectl get pods --namespace default -l "app.kubernetes.io/name=kafka-ui,app.kubernetes.io/instance=kafka-ui" -o jsonpath="{.items[0].metadata.name}") ; kubectl --namespace default logs $POD_NAME',
+trigger_mode=TRIGGER_MODE_MANUAL,auto_init=False, allow_parallel=True)
+
+local_resource("Kafka Password", "kubectl get -o json secret kafka | jq -r '.data.password | @base64d'",trigger_mode=TRIGGER_MODE_MANUAL,auto_init=False, allow_parallel=True)
 
 build_args = dict(
         build_args = { 'GO_VERSION': '1.20.2'}
@@ -81,7 +95,7 @@ def main():
   )
 
   # To update on helm chart source changes, uncomment below
-  # watch_file(tidepool_helm_chart_dir)
+  # watch_file(statemachine2_helm_chart_dir)
 
   # Back out of actual provisioning for debugging purposes by uncommenting below
   # fail('NOT YET ;)')
@@ -98,16 +112,18 @@ def buildDockerImage(build_arg):
   local_resource(
     'statemachine-go-compile',
     compile_cmd,
-    #deps=['./examples/forward/forward_example.go'],
+    deps=['./examples/forward/forward_example.go'],
+    trigger_mode=TRIGGER_MODE_AUTO,auto_init=True, allow_parallel=True
     )
 
   docker_build_with_restart(
     'statemachine-go-image',
     '.',
     entrypoint=['/app/build/statemachine-go'],
-    dockerfile='deployments/examples/charts/forward/Dockerfile',
+    dockerfile='deployments/examples/charts/statemachine2-forward-example/Dockerfile',
     only=[
       './build',
+      './examples/forward',
     ],
     live_update=[
       sync('./build', '/app/build'),

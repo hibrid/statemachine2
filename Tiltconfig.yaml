@@ -34,7 +34,7 @@ global:
 kafka:
   configmap:
     enabled: true
-    Brokers: "kafka-kafka-bootstrap:9092"
+    Brokers: "kafka-kafka-0:9092"
     RequireSSL: "false"
     TopicPrefix: "default-"
     Username: "kafka"
@@ -85,7 +85,7 @@ forward:
   deployment:
     # image: statemachine-go-image # Uncomment to build and run local image or a specific remote image
   # hostPath: ~/go/src/github.com/hibrid/statemachine2      # Uncomment to build and run local image
-  containerPath: '/go/src/github.com/hibrid/statemachine2/deployments/examples/forward'
+  containerPath: '/go/src/github.com/hibrid/statemachine2/deployments/examples/statemachine2-forward-example'
   dockerFile: 'Dockerfile'
   rebuildCommand: 'SERVICE="-o build/statemachine-go ./" make service-build'
 

@@ -3,12 +3,15 @@ description: A Helm chart for statemachine2
 name: statemachine2
 version: 0.15.24
 dependencies:
-  - name: forward
+  - name: statemachine2-forward-example
     version: 0.1.0
-    repository: "file://./charts/forward"
+    repository: "file://./charts/statemachine2-forward-example"
   - name: kafka
     version: 0.1.0
     repository: "file://./charts/kafka"
+  - name: mariadb
+    version: 15.1.2
+    repository: "file://./charts/mariadb"
 maintainers:
   - name: gilbert mena
     email: gilbert@gmena.net

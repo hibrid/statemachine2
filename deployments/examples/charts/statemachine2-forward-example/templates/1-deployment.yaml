@@ -1,0 +1,89 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: forward
+{{ include "charts.labels.standard" .}}
+  name: forward
+  namespace: {{.Release.Namespace}}
+{{ if .Values.deployment.annotations }}
+    {{- .Values.deployment.annotations | toYaml | nindent 4 }}
+{{- end }}
+spec:
+  selector:
+    matchLabels:
+      app: forward
+      app.kubernetes.io/name: {{ include "charts.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  replicas: {{ .Values.deployment.replicas }}
+  strategy: {}
+  template:
+    metadata:
+{{ if .Values.podAnnotations }}
+      annotations:
+        {{- .Values.podAnnotations | toYaml | nindent 8 }}
+{{- end }}
+      labels:
+        app: forward
+        app.kubernetes.io/name: {{ include "charts.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      initContainers:
+      {{ include "charts.init.shoreline" .}}
+      {{ if .Values.initContainers }}
+{{- with .Values.initContainers }}
+{{toYaml . | indent 6}}{{- end }}
+      {{- end }}
+{{ if .Values.deployment.serviceAccount.create }}
+{{ if .Values.serviceAccount.name }}
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+{{- end }}
+{{- end }}
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      containers:
+      - env:
+        {{ include "charts.platform.env.clients" .}}
+        {{ include "charts.kafka.common" .}}
+        {{ include "charts.kafka.cloudevents.client" (dict "Values" .Values "Release" .Release "client" "statemachine2") }}
+        - name: DB_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: statemachine2-forward-example
+              key: Username
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: statemachine2-forward-example
+              key: Password
+        - name: DB_PORT
+          value: :{{.Values.global.ports.mariadb}}
+        - name: DB_HOST
+          value: {{.Values.deployment.env.db.host}}
+        - name: DB_NAME
+          value: {{.Values.deployment.env.db.name}}
+        image: "{{ .Values.deployment.image }}"
+        securityContext:
+          {{- .Values.podSecurityContext | toYaml | nindent 10 }}
+        {{ template "charts.platform.probes" .Values.global.ports.statemachine2 }}
+        name: statemachine2
+        ports:
+        - containerPort: {{.Values.global.ports.statemachine2}}
+          name: "http"
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+      restartPolicy: Always
+    {{- with .Values.nodeSelector }}
+      nodeSelector:
+{{ toYaml . | indent 8 }}
+    {{- end }}
+    {{- with .Values.affinity }}
+      affinity:
+{{ toYaml . | indent 8 }}
+    {{- end }}
+    {{- with .Values.tolerations }}
+      tolerations:
+{{ toYaml . | indent 8 }}
+    {{- end }}
+ 

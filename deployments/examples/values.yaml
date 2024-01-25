@@ -72,11 +72,23 @@ mariadb:
     password: "password"
     username: "killbill"
     database: "statemachine"
-
+statemachine2-forward-example:
+  secret:
+    enabled: true
+    data_:
+      Username: "killbill"
+      Password: "password"
+  deployment:
+    env:
+      db:
+        name: statemachine
+        host: st-mariadb
 statemachine2:
   secret:
-    data:
-
+    enabled: true
+    data_:
+      Username: "killbill"
+      Password: "password"
   tests:
     job: "none"
     enabled: false
