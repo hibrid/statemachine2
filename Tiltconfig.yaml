@@ -34,7 +34,7 @@ global:
 kafka:
   configmap:
     enabled: true
-    Brokers: "kafka-kafka-0:9092"
+    Brokers: "kafka-kafka-bootstrap:9092"
     RequireSSL: "false"
     TopicPrefix: "default-"
     Username: "kafka"

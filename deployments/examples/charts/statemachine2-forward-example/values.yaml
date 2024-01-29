@@ -16,7 +16,7 @@ deployment:
     # -- kafka configuration
     kafka:
       # -- kafka brokers
-      brokers: kafka-kafka-0:9092
+      brokers: kafka-kafka-bootstrap:9092
       # -- kafka topic prefix
       topicPrefix: default-
       # -- kafka username

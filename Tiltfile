@@ -199,7 +199,7 @@ def provisionServerSecrets ():
 ### Config Maps Start ###
 def provisionConfigMaps ():
   required_configmaps = [
-    #'statemachine2',
+    'kafka',
   ]
 
   # Skip configmaps already available on cluster
@@ -213,7 +213,7 @@ def provisionConfigMaps ():
       configmap=configmap,
     )
 
-    templatePath = 'deployments/examples/{configmapChartPath}'.format(
+    templatePath = 'charts/{configmapChartPath}'.format(
       configmapChartPath=configmapChartPath,
     )
 

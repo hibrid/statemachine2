@@ -2,7 +2,7 @@ configmap:
   # -- whether to generate a configmap
   enabled: true
   # -- comma-separated list of broker URLs
-  Brokers: ""
+  Brokers: kafka-kafka-bootstrap:9092
   # -- whether SSL is required for communication
   RequireSSL: "true"
   # -- prefix to apply to all topic names
