@@ -12,7 +12,10 @@ require (
 	go.uber.org/zap v1.21.0
 )
 
-require go.uber.org/atomic v1.7.0 // indirect
+require (
+	github.com/confluentinc/confluent-kafka-go/v2 v2.3.0 // indirect
+	go.uber.org/atomic v1.7.0 // indirect
+)
 
 require (
 	github.com/google/uuid v1.6.0
