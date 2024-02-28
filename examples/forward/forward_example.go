@@ -175,11 +175,11 @@ func main() {
 	})
 	step1Handler := &Step1{}
 	step1 := statemachine.NewStep(step1Handler.Name(), zap.NewNop(), step1Handler.ExecuteForward, step1Handler.ExecuteBackward, step1Handler.ExecutePause, step1Handler.ExecuteResume)
-	sm.AddStep(step1, step1Handler.Name())
+	sm.AddStep(step1)
 	step2Handler := &Step2{}
-	//sm.AddStep(step2Handler, step2Handler.Name())
+	//sm.AddStep(step2Handler)
 	step2 := statemachine.NewStep(step2Handler.Name(), zap.NewNop(), step2Handler.ExecuteForward, step2Handler.ExecuteBackward, step2Handler.ExecutePause, step2Handler.ExecuteResume)
-	sm.AddStep(step2, step2Handler.Name())
+	sm.AddStep(step2)
 	//cancel()
 	err = sm.Run()
 	if err != nil {

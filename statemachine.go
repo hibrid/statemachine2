@@ -777,7 +777,7 @@ func (sm *StateMachine) SetState(newState State, event Event) error {
 }
 
 // AddStep adds a handler to the state machine.
-func (sm *StateMachine) AddStep(handler StepHandler, name string) *StateMachine {
+func (sm *StateMachine) AddStep(handler StepHandler) *StateMachine {
 	sm.Handlers = append(sm.Handlers, handler)
 	return sm
 }

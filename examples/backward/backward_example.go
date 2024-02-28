@@ -151,10 +151,10 @@ func main() {
 	})
 	primero := &Step1{}
 	step1 := statemachine.NewStep(primero.Name(), zap.NewNop(), primero.ExecuteForward, primero.ExecuteBackward, primero.ExecutePause, primero.ExecuteResume)
-	sm.AddStep(step1, primero.Name())
+	sm.AddStep(step1)
 	segundo := &Step2{}
 	step2 := statemachine.NewStep(segundo.Name(), zap.NewNop(), segundo.ExecuteForward, segundo.ExecuteBackward, segundo.ExecutePause, segundo.ExecuteResume)
-	sm.AddStep(step2, segundo.Name())
+	sm.AddStep(step2)
 
 	err = sm.Run()
 	if err != nil {
