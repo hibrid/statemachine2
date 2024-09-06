@@ -1483,8 +1483,11 @@ func TestStateMachine_Machine_Lock_Sleep_Integration(t *testing.T) {
 
 	queryTime := time.Now()
 
-	rows := sqlmock.NewRows([]string{"LockType", "StartTimestamp", "EndTimestamp", "RecurInterval", "DayOfWeek", "DayOfMonth", "RecurStartTime", "RecurEndTime"}).
-		AddRow(MachineLockTypeSleepState, queryTime.Add(-time.Hour), queryTime.Add(time.Hour), "None", 0, 0, queryTime.Add(-time.Hour), queryTime.Add(time.Hour)) // Matches
+	oneHourBeforeQueryTime := queryTime.Add(-time.Hour)
+	oneHourAfterQueryTime := queryTime.Add(time.Hour)
+
+	rows := sqlmock.NewRows([]string{"LockType", "StartTimestamp", "EndTimestamp", "RecurInterval", "IntervalPeriod", "DayOfWeek", "DayOfMonth", "RecurStartDate", "RecurEndDate", "RecurStartTime", "RecurEndTime"}).
+		AddRow(MachineLockTypeSleepState, oneHourBeforeQueryTime, oneHourAfterQueryTime, "None", 0, 0, 0, oneHourBeforeQueryTime, oneHourAfterQueryTime, oneHourBeforeQueryTime, oneHourAfterQueryTime) // Matches
 
 	mock.ExpectQuery(escapeRegexChars(checkStateMachineTypeLockSQL())).
 		WithArgs(config.Name, sqlmock.AnyArg(), sqlmock.AnyArg()).
