@@ -5,6 +5,47 @@ import (
 	"time"
 )
 
+type ValidationError struct {
+	StateMachineError
+	Field          string     // Name of the field that failed validation
+	Value          TypedValue // The value that failed validation
+	ExpectedType   string     // Expected data type of the field
+	ValidationRule string     // Description of the validation rule that failed
+	MinValue       TypedValue // Minimum allowed value (if applicable)
+	MaxValue       TypedValue // Maximum allowed value (if applicable)
+	AllowedValues  []string   // List of allowed values (if applicable)
+	CustomMessage  string     // Custom error message for this validation
+	Err            error      // The underlying error
+}
+
+type TypedValue struct {
+	Type  string
+	Value interface{}
+}
+
+func (tv TypedValue) String() string {
+	return fmt.Sprintf("%v (%s)", tv.Value, tv.Type)
+}
+
+func (e *ValidationError) Error() string {
+	return fmt.Sprintf("%s: %s - %s (%s) - Value: %s - Min: %s - Max: %s - %v",
+		e.StateMachineError.Msg, e.Field, e.ValidationRule, e.ExpectedType,
+		e.Value.String(), e.MinValue.String(), e.MaxValue.String(), e.Err)
+}
+
+func NewValidationError(field string, value interface{}, expectedType, validationRule string, minValue, maxValue interface{}, err error) *ValidationError {
+	return &ValidationError{
+		StateMachineError: StateMachineError{Msg: "Validation error"},
+		Field:             field,
+		Value:             TypedValue{Type: fmt.Sprintf("%T", value), Value: value},
+		ExpectedType:      expectedType,
+		ValidationRule:    validationRule,
+		MinValue:          TypedValue{Type: fmt.Sprintf("%T", minValue), Value: minValue},
+		MaxValue:          TypedValue{Type: fmt.Sprintf("%T", maxValue), Value: maxValue},
+		Err:               fmt.Errorf("validation failed: %w", err),
+	}
+}
+
 type HaltAllStateMachinesByTypeError struct {
 	StateMachineError
 	LockType      MachineLockType

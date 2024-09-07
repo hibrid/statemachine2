@@ -204,7 +204,7 @@ func main() {
 		panic(err)
 	}
 
-	if !sm.DidStateMachineComplete() {
+	if !sm.DidItComplete() {
 		if sm.DidStateMachineFail() {
 			fmt.Println("State machine failed")
 		}
@@ -220,7 +220,7 @@ func main() {
 		if sm.IsTheStateMachineInATerminalState() {
 			fmt.Println("State machine is in a terminal state")
 		}
-	} else if sm.DidStateMachineComplete() {
+	} else if sm.DidItComplete() {
 		fmt.Println("Statemachine completed successfully")
 		ipAddress := sm.GetCurrentArbitraryData()["IpAddress"]
 		fmt.Println("The IP Address Assigned is: ", ipAddress.(string))

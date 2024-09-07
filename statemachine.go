@@ -148,8 +148,8 @@ func (sm *StateMachine) createContext() *Context {
 
 // validateHandlers checks if the state machine has valid handlers.
 func (sm *StateMachine) validateHandlers() error {
-	if sm.Handlers == nil || len(sm.Handlers) == 0 {
-		return fmt.Errorf("no handlers found")
+	if len(sm.Handlers) == 0 {
+		return NewValidationError("Handlers", sm.Handlers, "[]StepHandler", "non-empty slice", nil, nil, fmt.Errorf("no handlers found"))
 	}
 	return nil
 }
@@ -671,8 +671,8 @@ func (sm *StateMachine) GetState() State {
 	return sm.CurrentState
 }
 
-// DidStateMachineComplete returns true if the state machine completed successfully.
-func (sm *StateMachine) DidStateMachineComplete() bool {
+// DidItComplete returns true if the state machine completed successfully.
+func (sm *StateMachine) DidItComplete() bool {
 	return sm.CurrentState == StateCompleted
 }
 
