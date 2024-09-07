@@ -174,7 +174,10 @@ func main() {
 		AfterTheStep:  leaveStateCallback2,
 	})
 	step1Handler := &Step1{}
-	step1 := statemachine.NewStep(step1Handler.Name(), zap.NewNop(), step1Handler.ExecuteForward, step1Handler.ExecuteBackward, step1Handler.ExecutePause, step1Handler.ExecuteResume)
+	// example of using NewStepFromHandler to pass in the handler and let the function create the step
+	step1 := statemachine.NewStepFromHandler(step1Handler, zap.NewNop())
+	// example of using NewStep to pass in each function individually since each function just needs to satisfy the interface
+	//step1 := statemachine.NewStep(step1Handler.Name(), zap.NewNop(), step1Handler.ExecuteForward, step1Handler.ExecuteBackward, step1Handler.ExecutePause, step1Handler.ExecuteResume)
 	sm.AddStep(step1)
 	step2Handler := &Step2{}
 	//sm.AddStep(step2Handler)
